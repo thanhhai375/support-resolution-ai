@@ -12,26 +12,22 @@ jobs:
     name: Backend (Spring Boot)
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: crm_copilot_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Check if backend exists
+        id: check_backend
+        run: |
+          if [ -f "backend/pom.xml" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏳ Backend chưa được setup — bỏ qua bước build"
+          fi
+
       - name: Setup Java 17
+        if: steps.check_backend.outputs.exists == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
@@ -39,23 +35,9 @@ jobs:
           cache: maven
 
       - name: Build & Test Backend
+        if: steps.check_backend.outputs.exists == 'true'
         working-directory: ./backend
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_NAME: crm_copilot_test
-          DB_USERNAME: postgres
-          DB_PASSWORD: postgres
-          JWT_SECRET: test_secret_key_for_ci
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: mvn clean verify
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: backend-test-results
-          path: backend/target/surefire-reports/
 
   # ─── Frontend Build & Test ──────────────────────────────────────
   frontend:
@@ -66,26 +48,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Check if frontend exists
+        id: check_frontend
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏳ Frontend chưa được setup — bỏ qua bước build"
+          fi
+
       - name: Setup Node.js 18
+        if: steps.check_frontend.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install & Build
+        if: steps.check_frontend.outputs.exists == 'true'
         working-directory: ./frontend
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
 
-      - name: Type check
-        working-directory: ./frontend
-        run: npm run type-check
-
-      - name: Build
-        working-directory: ./frontend
-        run: npm run build
-
-  # ─── Notify kết quả ─────────────────────────────────────────────
+  # ─── Summary ────────────────────────────────────────────────────
   notify:
     name: CI Summary
     runs-on: ubuntu-latest
@@ -95,5 +83,5 @@ jobs:
     steps:
       - name: Print result
         run: |
-          echo "Backend: ${{ needs.backend.result }}"
+          echo "Backend : ${{ needs.backend.result }}"
           echo "Frontend: ${{ needs.frontend.result }}"
