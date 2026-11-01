@@ -9,7 +9,7 @@ on:
 jobs:
   # ─── Backend Build & Test ───────────────────────────────────────
   backend:
-    name: Backend (Spring Boot)
+    name: Backend
     runs-on: ubuntu-latest
 
     steps:
@@ -41,7 +41,7 @@ jobs:
 
   # ─── Frontend Build & Test ──────────────────────────────────────
   frontend:
-    name: Frontend (React + TypeScript)
+    name: Frontend
     runs-on: ubuntu-latest
 
     steps:
