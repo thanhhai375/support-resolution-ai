@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_SupportCopilot" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Support_Resolution" name="Support Resolution Copilot" isExecutable="false">
+    <bpmn:startEvent id="Start_TicketCreated" name="Khách gửi Ticket">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="Task_AutoCategorize" name="Tự động phân loại Ticket (CRM-2)">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_GenerateResolution" name="AI Copilot tạo câu trả lời gợi ý (CRM-1)">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:userTask id="Task_ReviewResolution" name="Nhân viên hỗ trợ duyệt câu trả lời">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_Approved" name="Duyệt đạt yêu cầu?">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_Yes</bpmn:outgoing>
+      <bpmn:outgoing>Flow_No</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Task_EditResponse" name="Chỉnh sửa câu trả lời thủ công">
+      <bpmn:incoming>Flow_No</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:task id="Task_SendResponse" name="Gửi phản hồi cho khách hàng &amp; Đóng Ticket">
+      <bpmn:incoming>Flow_Yes</bpmn:incoming>
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_End</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End_TicketResolved" name="Đóng Ticket thành công">
+      <bpmn:incoming>Flow_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_TicketCreated" targetRef="Task_AutoCategorize" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_AutoCategorize" targetRef="Task_GenerateResolution" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_GenerateResolution" targetRef="Task_ReviewResolution" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Task_ReviewResolution" targetRef="Gateway_Approved" />
+    <bpmn:sequenceFlow id="Flow_Yes" name="Có" sourceRef="Gateway_Approved" targetRef="Task_SendResponse" />
+    <bpmn:sequenceFlow id="Flow_No" name="Không" sourceRef="Gateway_Approved" targetRef="Task_EditResponse" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_EditResponse" targetRef="Task_SendResponse" />
+    <bpmn:sequenceFlow id="Flow_End" sourceRef="Task_SendResponse" targetRef="End_TicketResolved" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Support_Resolution">
+      <bpmndi:BPMNShape id="Start_TicketCreated_di" bpmnElement="Start_TicketCreated">
+        <dc:Bounds x="160" y="112" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="135" y="155" width="87" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AutoCategorize_di" bpmnElement="Task_AutoCategorize">
+        <dc:Bounds x="250" y="90" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_GenerateResolution_di" bpmnElement="Task_GenerateResolution">
+        <dc:Bounds x="420" y="90" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ReviewResolution_di" bpmnElement="Task_ReviewResolution">
+        <dc:Bounds x="600" y="90" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Approved_di" bpmnElement="Gateway_Approved" isMarkerVisible="true">
+        <dc:Bounds x="775" y="105" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="765" y="75" width="70" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_EditResponse_di" bpmnElement="Task_EditResponse">
+        <dc:Bounds x="870" y="210" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendResponse_di" bpmnElement="Task_SendResponse">
+        <dc:Bounds x="1030" y="90" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_TicketResolved_di" bpmnElement="End_TicketResolved">
+        <dc:Bounds x="1212" y="112" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1195" y="155" width="70" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1"><di:waypoint x="196" y="130" /><di:waypoint x="250" y="130" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2"><di:waypoint x="370" y="130" /><di:waypoint x="420" y="130" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3"><di:waypoint x="550" y="130" /><di:waypoint x="600" y="130" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4"><di:waypoint x="720" y="130" /><di:waypoint x="775" y="130" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Yes_di" bpmnElement="Flow_Yes"><di:waypoint x="825" y="130" /><di:waypoint x="1030" y="130" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_No_di" bpmnElement="Flow_No"><di:waypoint x="800" y="155" /><di:waypoint x="800" y="250" /><di:waypoint x="870" y="250" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5"><di:waypoint x="990" y="250" /><di:waypoint x="1095" y="250" /><di:waypoint x="1095" y="170" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_End_di" bpmnElement="Flow_End"><di:waypoint x="1160" y="130" /><di:waypoint x="1212" y="130" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
