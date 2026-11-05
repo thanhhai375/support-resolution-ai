@@ -192,9 +192,9 @@ phạm vi mở rộng nếu Jira chưa yêu cầu.
 
 ## 5. Sơ đồ luồng xử lý
 
-Sơ đồ dưới đây mô tả luồng đề xuất cho MVP. Có thể lưu hình Mermaid được
-xuất từ công cụ hỗ trợ Mermaid vào thư mục `images/` của tài liệu khi
-nhóm tạo bản tài liệu hoàn chỉnh.
+Sơ đồ dưới đây mô tả luồng đề xuất cho MVP.
+
+![Sơ đồ luồng xử lý AI Auto-Categorization](images/CRM-2-flowchart.png)
 
 ### Sơ đồ Mermaid
 
