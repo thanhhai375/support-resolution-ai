@@ -11,6 +11,7 @@ export interface Ticket {
   responseTimeMinutes: number | null
   description?: string
   assignee?: string
+  replies?: { id: string; content: string; createdAt: string }[]
 }
 
 export interface TicketApiResponse {

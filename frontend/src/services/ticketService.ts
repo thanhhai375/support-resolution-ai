@@ -1,6 +1,8 @@
 import type { Ticket, TicketPriority, TicketStatus } from '../types/ticket'
+import { getStoredToken } from '../auth/token'
+import { DEMO_AUTH_ENABLED } from '../auth/demo'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
 const mockTickets: Ticket[] = [
   { id: 'TK-1024', title: 'Không thể đăng nhập vào tài khoản', customerName: 'Nguyễn An', status: 'AI_SOLVED', priority: 'HIGH', createdAt: '2026-11-06T09:30:00.000Z', responseTimeMinutes: 12 },
@@ -49,8 +51,13 @@ function normalizeTicket(raw: unknown, index: number): Ticket {
 }
 
 export async function getTickets(): Promise<{ tickets: Ticket[]; source: 'api' | 'mock' }> {
+  if (DEMO_AUTH_ENABLED) return { tickets: mockTickets, source: 'mock' }
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets`)
+    const token = getStoredToken()
+    const response = await fetch(`${API_BASE_URL}/api/tickets`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: AbortSignal.timeout(15_000),
+    })
     if (!response.ok) {
       throw new Error(`API trả về HTTP ${response.status}`)
     }
