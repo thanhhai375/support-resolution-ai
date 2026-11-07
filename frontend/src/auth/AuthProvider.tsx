@@ -4,7 +4,7 @@ import { getStoredToken, readClaims, TOKEN_KEY } from './token'
 
 interface AuthContextValue {
   token: string | null
-  signIn: (token: string, remember?: boolean) => void
+  signIn: (token: string) => void
   signOut: () => void
 }
 
@@ -18,12 +18,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null)
   }
 
-  function signIn(nextToken: string, remember = true) {
+  function signIn(nextToken: string) {
     if (!readClaims(nextToken)) throw new Error('Token đăng nhập không hợp lệ hoặc đã hết hạn.')
     localStorage.removeItem(TOKEN_KEY)
     sessionStorage.removeItem(TOKEN_KEY)
-    const storage = remember ? localStorage : sessionStorage
-    storage.setItem(TOKEN_KEY, nextToken)
+    sessionStorage.setItem(TOKEN_KEY, nextToken)
     setToken(nextToken)
   }
 

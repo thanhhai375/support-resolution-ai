@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, Menu, Search, Ticket as TicketIcon, X } from 'lucide-react'
+import { BookOpen, LayoutDashboard, BarChart3, Settings, LogOut, Menu, Search, Ticket as TicketIcon, X } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider'
 import { readClaims } from '../auth/token'
 import { useTickets } from '../context/TicketsProvider'
 
 const navigation = [
-  { to: '/dashboard', label: 'Tổng quan', accessibleLabel: 'Live Dashboard' },
-  { to: '/tickets', label: 'Danh sách ticket', accessibleLabel: 'Ticket Feed' },
-  { to: '/analytics', label: 'Phân tích dữ liệu', accessibleLabel: 'Analytics' },
-  { to: '/ai-settings', label: 'AI Settings', accessibleLabel: 'AI Settings' },
+  { to: '/dashboard', label: 'Tổng quan', accessibleLabel: 'Live Dashboard', icon: LayoutDashboard },
+  { to: '/tickets', label: 'Danh sách ticket', accessibleLabel: 'Ticket Feed', icon: TicketIcon },
+  { to: '/knowledge-base', label: 'Thư viện tài liệu', accessibleLabel: 'Knowledge Base', icon: BookOpen },
+  { to: '/analytics', label: 'Báo cáo & Thống kê', accessibleLabel: 'Analytics', icon: BarChart3 },
+  { to: '/ai-settings', label: 'AI Settings', accessibleLabel: 'AI Settings', icon: Settings },
 ]
 
 export default function MainLayout() {
@@ -80,7 +81,7 @@ export default function MainLayout() {
     <a className="skip-link" href="#main-content">Bỏ qua điều hướng</a>
     <header className="topbar">
       <button ref={menuButtonRef} className="mobile-menu-button" onClick={() => setMenuOpen(true)} aria-label="Mở menu điều hướng" aria-controls="main-sidebar" aria-expanded={menuOpen}><Menu size={21} aria-hidden="true" /></button>
-      <Link className="brand" to="/dashboard" aria-label="Support AI – Dashboard">SUPPORT AI</Link>
+      <Link className="brand" to="/dashboard" aria-label="Support AI – Dashboard">SONGNHAT</Link>
       <div className="top-search-wrap">
         <label className="top-search"><Search size={18} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setSearch('') }} placeholder="Tìm kiếm ticket, người dùng…" aria-label="Tìm kiếm ticket hoặc người dùng" />{search && <button className="search-clear" onClick={() => setSearch('')} aria-label="Xóa tìm kiếm"><X size={16} /></button>}</label>
         {search.trim() && <div className="global-search-results">
@@ -99,11 +100,11 @@ export default function MainLayout() {
     </header>
     {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} aria-hidden="true" />}
     <aside ref={sidebarRef} id="main-sidebar" className="sidebar" aria-label="Workspace" role={menuOpen ? 'dialog' : undefined} aria-modal={menuOpen ? true : undefined}>
-      <div className="sidebar-heading"><p className="nav-caption">WORKSPACE</p><button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Đóng menu"><X size={20} aria-hidden="true" /></button></div>
+      <div className="sidebar-heading"><Link className="workspace-brand" to="/dashboard"><b>SN</b><span>SONGNHAT<small>Support Resolution AI</small></span></Link><button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Đóng menu"><X size={20} aria-hidden="true" /></button></div>
       <nav className="navigation" aria-label="Điều hướng chính">
-        {navigation.map(({ to, label, accessibleLabel }) => <NavLink key={to} to={to} aria-label={accessibleLabel} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}><span className="nav-bullet" aria-hidden="true" />{label}</NavLink>)}
+        {navigation.map(({ to, label, accessibleLabel, icon: Icon }) => <NavLink key={to} to={to} aria-label={accessibleLabel} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}><Icon size={16} aria-hidden="true" />{label}</NavLink>)}
       </nav>
-      <div className="sidebar-note"><strong>AI ASSISTANT</strong><p>Phân loại yêu cầu và gợi ý phản hồi tự động.</p><Link to="/ai-settings" onClick={() => setMenuOpen(false)}>Cấu hình trợ lý →</Link></div>
+      <div className="sidebar-staff"><span className="staff-avatar">{avatar}</span><div><strong>{userName}</strong><small>Support Agent</small></div></div>
     </aside>
     {notice && <div className="toast-notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Đóng thông báo">×</button></div>}
     {showHelp && <div className="modal-backdrop"><section className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="help-title"><h2 id="help-title">Trung tâm trợ giúp</h2><p className="subtitle">Chọn Tổng quan để theo dõi hoạt động. Danh sách ticket cho phép tìm kiếm, lọc và mở chi tiết yêu cầu. Phân tích dữ liệu hiển thị các chỉ số hỗ trợ.</p><button autoFocus className="primary-button dialog-action" onClick={() => setShowHelp(false)}>Đóng</button></section></div>}

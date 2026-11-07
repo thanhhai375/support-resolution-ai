@@ -10,6 +10,7 @@ import Analytics from './pages/Analytics'
 import Login from './pages/Login'
 import TicketDetail from './pages/TicketDetail'
 import Register from './pages/Register'
+import KnowledgeBase from './pages/KnowledgeBase'
 
 function Workspace() {
   return <TicketsProvider><Outlet /></TicketsProvider>
@@ -43,6 +44,7 @@ export const routes: RouteObject[] = [
           { path: 'dashboard', element: <DashboardRoute /> },
           { path: 'tickets', element: <TicketFeedRoute /> },
           { path: 'tickets/:ticketId', element: <TicketDetail /> },
+          { path: 'knowledge-base', element: <KnowledgeBase /> },
           { path: 'ai-settings', element: <AISettings /> },
           { path: 'analytics', element: <Analytics /> },
           { path: '*', element: <NotFound /> },

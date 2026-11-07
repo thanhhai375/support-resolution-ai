@@ -31,5 +31,5 @@ export function readClaims(token: string | null): JwtClaims | null {
 }
 
 export function getStoredToken(): string | null {
-  try { return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) } catch { return null }
+  try { return sessionStorage.getItem(TOKEN_KEY) } catch { return null }
 }

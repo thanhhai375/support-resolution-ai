@@ -14,7 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
-  const [remember, setRemember] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const [showResetHelp, setShowResetHelp] = useState(false)
   const from: unknown = (location.state as { from?: unknown } | null)?.from
   const destination = typeof from === 'string' && /^\/(?!\/)/.test(from) && !from.includes('\\') && !from.startsWith('/login')
@@ -28,7 +28,7 @@ export default function Login() {
     setError('')
     try {
       if (DEMO_AUTH_ENABLED) {
-        signIn(createDemoToken(email, password), remember)
+        signIn(createDemoToken(email, password))
         return
       }
       const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
@@ -45,7 +45,7 @@ export default function Login() {
         || !('access_token' in payload) || typeof payload.access_token !== 'string') {
         throw new Error('Phản hồi đăng nhập không hợp lệ.')
       }
-      signIn(payload.access_token, remember)
+      signIn(payload.access_token)
     } catch (cause) {
       setError(cause instanceof TypeError || (cause instanceof DOMException && cause.name === 'TimeoutError')
         ? 'Không kết nối được máy chủ đăng nhập. Vui lòng thử lại.'
@@ -55,14 +55,16 @@ export default function Login() {
 
   return <AuthLayout title="Đăng nhập tài khoản">
     <section className="login-card" aria-labelledby="login-title">
-      <h1 id="login-title">Đăng nhập tài khoản</h1>
-      <p className="subtitle">Chào mừng bạn quay trở lại hệ thống</p>
+      <h1 id="login-title">Đăng nhập vào hệ thống</h1>
+      <p className="subtitle">Không gian làm việc của nhân viên hỗ trợ</p>
+      <div className="staff-roles"><span>Support Agent</span><span>Technical Approver</span></div>
       {DEMO_AUTH_ENABLED && <div className="demo-login-note" role="note"><strong>Chế độ demo — không cần backend</strong><span>{DEMO_EMAIL} / {DEMO_PASSWORD}</span><button type="button" onClick={() => { setEmail(DEMO_EMAIL); setPassword(DEMO_PASSWORD); setError('') }}>Điền tài khoản demo</button></div>}
       {typeof registeredEmail === 'string' && <p className="auth-success" role="status">Đăng ký thành công. Bạn có thể đăng nhập bằng tài khoản vừa tạo.</p>}
       <form onSubmit={submit} className="login-form">
         <label className="field-label">Email<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="name@company.com" disabled={pending} /></label>
-        <label className="field-label">Mật khẩu<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Nhập mật khẩu" disabled={pending} /></label>
-        <div className="login-options"><label><input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} /> Ghi nhớ đăng nhập</label><button type="button" onClick={() => setShowResetHelp(true)}>Quên mật khẩu?</button></div>
+        <label className="field-label" htmlFor="login-password">Mật khẩu</label>
+        <div className="password-field"><input id="login-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Nhập mật khẩu" disabled={pending} /><button type="button" aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? 'Ẩn' : 'Hiện'}</button></div>
+        <div className="login-options"><span>Phiên đăng nhập được lưu trong tab này</span><button type="button" onClick={() => setShowResetHelp(true)}>Quên mật khẩu?</button></div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button login-submit" disabled={pending}>{pending ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
       </form>

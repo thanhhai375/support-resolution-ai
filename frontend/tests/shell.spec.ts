@@ -7,7 +7,7 @@ function jwt(expiresInSeconds = 3600) {
 }
 
 async function session(page: Page, token = jwt()) {
-  await page.addInitScript(value => localStorage.setItem('access_token', value), token)
+  await page.addInitScript(value => sessionStorage.setItem('access_token', value), token)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -15,13 +15,13 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/tickets', route => route.fulfill({ status: 503, body: '{}' }))
 })
 
-for (const path of ['/', '/dashboard', '/tickets?search=TK-1024', '/ai-settings', '/analytics', '/unknown']) {
+for (const path of ['/', '/dashboard', '/tickets?search=TK-1024', '/ai-settings', '/analytics', '/knowledge-base', '/unknown']) {
   test(`unauthenticated ${path} redirects without mounting workspace`, async ({ page }) => {
     let ticketRequests = 0
     page.on('request', request => { if (request.url().endsWith('/api/tickets')) ticketRequests++ })
     await page.goto(path)
     await expect(page).toHaveURL('/login')
-    await expect(page.getByRole('heading', { name: 'Đăng nhập tài khoản' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Đăng nhập vào hệ thống' })).toBeVisible()
     await expect(page.getByRole('navigation')).toHaveCount(0)
     expect(ticketRequests).toBe(0)
   })
@@ -32,7 +32,7 @@ for (const token of ['broken-token', 'a.b.c', jwt(-60)]) {
     await session(page, token)
     await page.goto('/tickets')
     await expect(page).toHaveURL('/login')
-    await expect.poll(() => page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem('access_token'))).toBeNull()
   })
 }
 
@@ -45,17 +45,16 @@ test('login stores JWT, returns to intended route and logout protects history', 
   await page.goto('/tickets?search=TK-1024')
   await page.getByLabel('Email', { exact: true }).fill('admin@supportai.vn')
   await page.getByLabel('Mật khẩu', { exact: true }).fill('secret')
-  await page.getByLabel('Ghi nhớ đăng nhập').check()
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
   await expect(page).toHaveURL('/tickets?search=TK-1024')
   await expect(page.getByRole('row')).toHaveCount(2)
-  expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBe(token)
+  expect(await page.evaluate(() => sessionStorage.getItem('access_token'))).toBe(token)
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Danh sách ticket' })).toBeVisible()
   await page.getByRole('link', { name: 'Live Dashboard', exact: true }).click()
   await page.getByRole('button', { name: 'Logout' }).click()
   await expect(page).toHaveURL('/login')
-  expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
+  expect(await page.evaluate(() => sessionStorage.getItem('access_token'))).toBeNull()
   await page.goBack()
   await expect(page).toHaveURL('/login')
 })
@@ -68,7 +67,7 @@ test('failed login displays error and never creates a session', async ({ page })
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
   await expect(page.getByRole('alert')).toHaveText('Email hoặc mật khẩu không đúng.')
   await expect(page).toHaveURL('/login')
-  expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
+  expect(await page.evaluate(() => sessionStorage.getItem('access_token'))).toBeNull()
 })
 
 test('normal mode rejects demo tokens and hides demo sign-in', async ({ page }) => {
@@ -111,15 +110,21 @@ test('active session expiration redirects automatically', async ({ page }) => {
   await expect(page).toHaveURL('/login')
 })
 
-test('logout in another tab synchronizes the current session', async ({ page, context }) => {
-  await page.goto('/login')
-  await page.evaluate(token => localStorage.setItem('access_token', token), jwt())
-  await page.goto('/dashboard')
-  const other = await context.newPage()
-  await other.goto('/dashboard')
-  await expect(other.getByRole('heading', { name: 'Tổng quan hệ thống' })).toBeVisible()
-  await other.getByRole('button', { name: 'Logout' }).click()
+test('localStorage token does not authorize a session', async ({ page }) => {
+  await page.addInitScript(token => localStorage.setItem('access_token', token), jwt())
+  await page.goto('/knowledge-base')
   await expect(page).toHaveURL('/login')
+})
+
+test('knowledge base uses protected layout', async ({ page }) => {
+  await session(page)
+  await page.goto('/dashboard')
+  await page.getByRole('link', { name: 'Knowledge Base', exact: true }).click()
+  await expect(page).toHaveURL('/knowledge-base')
+  await expect(page.getByRole('heading', { name: 'Thư viện tài liệu' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Knowledge Base' })).toHaveAttribute('aria-current', 'page')
+  await page.getByLabel('Tìm tài liệu').fill('biến tần')
+  await expect(page.getByRole('heading', { name: 'Không tìm thấy tài liệu' })).toBeVisible()
 })
 
 for (const width of [320, 390, 768, 1440]) {
@@ -168,7 +173,7 @@ test('reference screens render and ticket filters work', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/login')
   await page.screenshot({ path: 'test-results/login.png', fullPage: true })
-  await page.evaluate(token => localStorage.setItem('access_token', token), jwt())
+  await page.evaluate(token => sessionStorage.setItem('access_token', token), jwt())
   await page.goto('/dashboard')
   await expect(page.getByRole('heading', { name: 'Tổng quan hệ thống' })).toBeVisible()
   await page.screenshot({ path: 'test-results/dashboard.png', fullPage: true })
