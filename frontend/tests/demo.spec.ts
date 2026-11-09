@@ -1,0 +1,36 @@
+import { expect, test } from '@playwright/test'
+
+test('demo session works without any API requests and logout protects internal routes', async ({ page }) => {
+  const apiRequests: string[] = []
+  await page.route('**/api/**', route => { apiRequests.push(route.request().url()); return route.abort() })
+  await page.goto('/tickets')
+  await expect(page).toHaveURL('/login')
+  await page.getByRole('button', { name: 'Điền tài khoản demo' }).click()
+  await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
+  await expect(page).toHaveURL('/tickets')
+  await expect(page.getByRole('button', { name: 'TK-1024', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'TK-1024', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Lịch sử trao đổi' })).toBeVisible()
+  await page.getByRole('link', { name: 'Live Dashboard', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Tổng quan hệ thống' })).toBeVisible()
+  await page.getByRole('link', { name: 'Analytics', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Phân tích hiệu suất hỗ trợ' })).toBeVisible()
+  await page.reload()
+  await expect(page).toHaveURL('/analytics')
+  await page.getByRole('link', { name: 'AI Settings', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'AI Settings', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Logout' }).click()
+  await expect(page).toHaveURL('/login')
+  await page.goto('/dashboard')
+  await expect(page).toHaveURL('/login')
+  expect(apiRequests).toEqual([])
+})
+
+test('incorrect demo credentials do not start a session', async ({ page }) => {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Điền tài khoản demo' }).click()
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('wrong')
+  await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Email hoặc mật khẩu demo không đúng.')
+  await expect(page).toHaveURL('/login')
+})

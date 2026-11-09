@@ -1,0 +1,67 @@
+/* Application shell: shared tokens and page components live in styles.css. */
+.crm-shell a { text-decoration: none; }
+.crm-shell a:focus-visible, .login-page button:focus-visible { outline: 3px solid #9aafff; outline-offset: 3px; }
+.crm-shell .brand { flex-shrink: 0; }
+.crm-shell .topbar { gap: 20px; }
+.crm-shell .top-search-wrap { flex: 1; width: auto; max-width: 450px; margin: 0 auto; min-width: 100px; }
+.crm-shell .top-search { height: 42px; }
+.crm-shell .top-actions { flex-shrink: 0; gap: 20px; }
+.system-status { display: inline-flex; align-items: center; gap: 7px; color: #63718b; font-size: 11px; white-space: nowrap; }
+.system-status .dot { flex-shrink: 0; }
+.user-summary { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.user-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.logout-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 40px; min-height: 40px; border: 1px solid var(--border); border-radius: 9px; padding: 0 11px; background: #fff; color: #63718b; font-size: 12px; cursor: pointer; }
+.logout-button:hover { color: #bd414c; border-color: #f3dadd; background: #fff5f5; }
+.sidebar-heading { display: flex; justify-content: space-between; align-items: center; }
+.crm-shell .nav-item { text-decoration: none; }
+.crm-shell .sidebar-note a { display: inline-block; margin-top: 12px; color: #dce5ff; font-size: 11px; }
+.crm-shell .main-content { min-width: 0; }
+.crm-shell .route-content:focus { outline: none; }
+.mobile-menu-button, .sidebar-close { display: none; }
+.skip-link { position: fixed; left: 12px; top: -70px; z-index: 150; padding: 12px; border-radius: 8px; background: #fff; color: var(--primary); }
+.skip-link:focus { top: 12px; }
+.text-link { display: inline-block; margin-top: 20px; color: var(--primary); font-size: 13px; }
+.settings-panel { max-width: 720px; padding: 32px; }
+.settings-icon, .login-symbol { display: inline-grid; place-items: center; width: 56px; height: 56px; margin-bottom: 20px; border-radius: 16px; color: var(--primary); background: #eef2ff; }
+.settings-panel p { color: #63718b; font-size: 13px; line-height: 1.8; }
+.settings-policy { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; color: #12835f; font-size: 12px; line-height: 1.6; }
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at top left, #e5ecff, transparent 60%), #f5f7fc; }
+.login-card { width: min(440px, 100%); padding: 36px; border: 1px solid var(--border); border-radius: 20px; background: #fff; box-shadow: var(--shadow); }
+.login-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 32px; font-size: 16px; font-weight: 800; color: var(--primary); }
+.login-card h1 { font-size: 25px; }
+.login-form { display: grid; gap: 18px; margin-top: 28px; }
+.login-form .field-label { font-size: 12px; }
+.login-form input { min-height: 46px; }
+.login-submit { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; }
+.login-submit:disabled { opacity: .65; cursor: wait; transform: none; }
+.login-footer { margin: 26px 0 0; color: #8793a8; font-size: 11px; line-height: 1.6; text-align: center; }
+@media (max-width: 1100px) {
+  .crm-shell .topbar { padding: 0 20px; gap: 16px; }
+  .crm-shell .top-actions { gap: 12px; }
+  .user-label { display: none; }
+}
+@media (max-width: 720px) {
+  .crm-shell .topbar { padding: 0 12px; gap: 10px; }
+  .crm-shell .brand { gap: 7px; font-size: 12px; }
+  .crm-shell .brand::before { width: 28px; height: 28px; border-radius: 9px; }
+  .crm-shell .top-actions { gap: 10px; margin-left: auto; }
+  .crm-shell .system-status > span:last-child, .logout-button > span { display: none; }
+  .mobile-menu-button, .sidebar-close { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 9px; color: #63718b; background: #f5f7fc; cursor: pointer; flex-shrink: 0; }
+  .crm-shell .sidebar { position: fixed; top: 0; bottom: 0; width: min(280px, calc(100vw - 48px)); padding: 20px 15px; z-index: 60; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility .2s; overflow-y: auto; }
+  .crm-shell.menu-open .sidebar { transform: translateX(0); visibility: visible; }
+  .crm-shell .sidebar-heading { margin-bottom: 24px; }
+  .crm-shell .nav-caption { display: block; margin: 0 12px; }
+  .crm-shell .navigation { display: grid; overflow: visible; gap: 7px; }
+  .crm-shell .nav-item { width: 100%; min-height: 46px; font-size: 12px; }
+  .crm-shell .nav-item.active { box-shadow: inset 3px 0 #5574ee; }
+  .crm-shell .sidebar-note { display: block; position: static; margin-top: 36px; }
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(17,27,48,.4); }
+  .crm-shell .main-content { min-height: calc(100vh - 62px); }
+  .crm-shell .page-content { padding-top: 24px; }
+  .login-card { padding: 28px 22px; }
+  .settings-panel { padding: 24px; }
+}
+@media (max-width: 359px) { .crm-shell .user-summary { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .crm-shell *, .login-page * { animation: none !important; transition: none !important; }
+}

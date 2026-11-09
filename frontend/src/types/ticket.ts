@@ -1,13 +1,37 @@
-export type TicketStatus = "Mới" | "Đang xử lý" | "Chờ duyệt" | "Đã giải quyết";
-export type TicketPriority = "Khẩn cấp" | "Cao" | "Trung bình" | "Thấp";
+export type TicketStatus =
+  | 'PENDING_REVIEW'
+  | 'PROCESSING'
+  | 'HAZARD_ESCALATED'
+  | 'RESOLVED'
+  // Giữ tương thích với dữ liệu cũ nếu backend vẫn trả các trạng thái này.
+  | 'AI_SOLVED'
+  | 'ESCALATED'
+
+export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+
 export interface Ticket {
-  id: string;
-  code: string;
-  title: string;
-  category: string;
-  priority: TicketPriority;
-  status: TicketStatus;
-  updatedAt: string;
-  equipment: string;
-  safetyLabel: "High Risk" | "Medium" | "Low";
+  id: string
+  title: string
+  customerName: string
+  status: TicketStatus
+  priority: TicketPriority
+  createdAt: string
+  responseTimeMinutes: number | null
+  device: string
+  safetyLabel: boolean
+  description?: string
+  assignee?: string
+  replies?: { id: string; content: string; createdAt: string }[]
+}
+
+export interface TicketApiResponse {
+  data?: unknown
+}
+
+export function isResolvedStatus(status: TicketStatus): boolean {
+  return status === 'RESOLVED' || status === 'AI_SOLVED'
+}
+
+export function isHazardStatus(status: TicketStatus): boolean {
+  return status === 'HAZARD_ESCALATED' || status === 'ESCALATED'
 }
