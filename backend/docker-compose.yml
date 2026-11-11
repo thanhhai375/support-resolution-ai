@@ -1,0 +1,165 @@
+# ==================================================
+
+# SONGNHAT COPILOT
+
+# Local PostgreSQL Environment
+
+#
+
+# Run from backend directory:
+
+# docker compose up -d
+
+# ==================================================
+
+
+
+services:
+
+
+
+  # ================================================
+
+  # 1. PostgreSQL Database
+
+  # ================================================
+
+
+
+  db:
+
+    image: postgres:16-alpine
+
+
+
+    container_name: songnhat-db
+
+
+
+    restart: unless-stopped
+
+
+
+    environment:
+
+      POSTGRES_USER: ${POSTGRES_USER:-songnhat}
+
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-songnhat_dev}
+
+      POSTGRES_DB: ${POSTGRES_DB:-songnhat_copilot}
+
+
+
+    ports:
+
+      - "${POSTGRES_PORT:-5432}:5432"
+
+
+
+    volumes:
+
+      - pgdata:/var/lib/postgresql/data
+
+
+
+    healthcheck:
+
+      test:
+
+        - CMD-SHELL
+
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+
+
+
+      interval: 5s
+
+      timeout: 5s
+
+      retries: 10
+
+
+
+
+
+  # ================================================
+
+  # 2. Database Schema Initialization
+
+  # ================================================
+
+
+
+  db-init:
+
+    image: postgres:16-alpine
+
+
+
+    container_name: songnhat-db-init
+
+
+
+    depends_on:
+
+      db:
+
+        condition: service_healthy
+
+
+
+    environment:
+
+      PGPASSWORD: ${POSTGRES_PASSWORD:-songnhat_dev}
+
+
+
+    volumes:
+
+      - ../docs/database/schema.sql:/schema.sql:ro
+
+
+
+    command:
+
+      - psql
+
+      - -h
+
+      - db
+
+      - -U
+
+      - ${POSTGRES_USER:-songnhat}
+
+      - -d
+
+      - ${POSTGRES_DB:-songnhat_copilot}
+
+      - -v
+
+      - ON_ERROR_STOP=1
+
+      - -f
+
+      - /schema.sql
+
+
+
+    restart: "no"
+
+
+
+
+
+# ================================================
+
+# 3. Persistent Database Volume
+
+# ================================================
+
+
+
+volumes:
+
+  pgdata:
