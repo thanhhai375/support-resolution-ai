@@ -1,17 +1,6 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-
-function Home() {
-  return <h1>Support Resolution AI</h1>
+import { RouterProvider } from 'react-router-dom'
+import { AuthProvider } from './auth/AuthProvider'
+import { router } from './router'
+export default function App() {
+  return <AuthProvider><RouterProvider router={router} /></AuthProvider>
 }
-
-function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-      </Routes>
-    </BrowserRouter>
-  )
-}
-
-export default App
