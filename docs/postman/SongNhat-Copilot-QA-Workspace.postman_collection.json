@@ -1,0 +1,168 @@
+{
+  "info": {
+    "name": "SongNhat Support Resolution Copilot — QA Collection",
+    "description": "API test collection for QA. Run in order: Health Check -> Auth -> Tickets -> Copilot.\n\nInstructions:\n1. Select Environment 'SongNhat Copilot - Local Dev'\n2. Run 'POST /api/auth/login' first — token is saved automatically\n3. All subsequent requests use the saved token",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "songnhat-copilot-qa-workspace-v1"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "email", "value": "admin@songnhat.vn" },
+    { "key": "password", "value": "Admin@123" },
+    { "key": "accessToken", "value": "" },
+    { "key": "ticketId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "GET / — Backend Status",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-00] Status 200 OK - Backend is online', () => pm.response.to.have.status(200));", "pm.test('[TC-00b] Response contains running message', () => { const body = pm.response.json(); pm.expect(body.message).to.include('running'); });"] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] } }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "Authentication and authorization endpoints",
+      "item": [
+        {
+          "name": "POST /api/auth/login",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-01] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-02] Returns bearer access_token', () => { const body = pm.response.json(); pm.expect(body.access_token).to.be.a('string').and.not.empty; pm.expect(body.token_type).to.eql('bearer'); pm.collectionVariables.set('accessToken', body.access_token); });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Run this first. Token auto-saved to accessToken variable."
+          }
+        },
+        {
+          "name": "POST /api/auth/login — Invalid Credentials (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-03] Status 401 Unauthorized on wrong password', () => pm.response.to.have.status(401));", "pm.test('[TC-04] Returns error detail message', () => { const body = pm.response.json(); pm.expect(body.detail).to.be.a('string'); });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"WrongPassword999\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "GET /api/auth/me",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-05] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-06] Returns user profile with required fields', () => { const u = pm.response.json(); pm.expect(u).to.have.keys('id', 'email', 'role', 'full_name'); });"] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          }
+        },
+        {
+          "name": "GET /api/auth/me — No Token (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-07] Status 401 when no token provided', () => pm.response.to.have.status(401));"] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] } }
+        }
+      ]
+    },
+    {
+      "name": "Tickets",
+      "description": "Ticket management endpoints",
+      "item": [
+        {
+          "name": "POST /api/tickets — Create Ticket",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-08] Status 201 Created', () => pm.response.to.have.status(201));", "pm.test('[TC-09] Returns created ticket with ID', () => { const body = pm.response.json(); pm.expect(body.data).to.exist; if (body.data && body.data.id) { pm.collectionVariables.set('ticketId', body.data.id); } });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Motor does not start after power is supplied\",\n  \"description\": \"ABB M2BAX 90L motor does not start after 380V power is supplied. Error indicator blinks 3 times.\",\n  \"priority\": \"high\",\n  \"created_by\": \"00000000-0000-0000-0000-000000000001\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/tickets", "host": ["{{baseUrl}}"], "path": ["api", "tickets"] }
+          }
+        },
+        {
+          "name": "POST /api/tickets — Create Hazard Ticket",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-10] Status 201 Created', () => pm.response.to.have.status(201));", "pm.test('[TC-11] Hazard ticket is created', () => { pm.expect(pm.response.json()).to.exist; });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Control panel emitting smoke\",\n  \"description\": \"URGENT: The drive control panel is emitting white smoke and a burning smell. Signs of fire inside the cabinet.\",\n  \"priority\": \"urgent\",\n  \"created_by\": \"00000000-0000-0000-0000-000000000001\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/tickets", "host": ["{{baseUrl}}"], "path": ["api", "tickets"] }
+          }
+        },
+        {
+          "name": "GET /api/tickets — List Tickets",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-12] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-13] Returns paginated structure', () => { const body = pm.response.json(); pm.expect(body).to.have.any.keys('items', 'tickets', 'data'); });"] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/tickets?page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "tickets"], "query": [{ "key": "page", "value": "0" }, { "key": "size", "value": "10" }] }
+          }
+        },
+        {
+          "name": "GET /api/tickets — Filter by Status",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-14] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-15] All returned tickets match status filter', () => { const body = pm.response.json(); const items = body.items ?? body.tickets ?? body.data ?? []; items.forEach(t => pm.expect(t.status.toLowerCase()).to.eql('open')); });"] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/tickets?status=open", "host": ["{{baseUrl}}"], "path": ["api", "tickets"], "query": [{ "key": "status", "value": "open" }] }
+          }
+        },
+        {
+          "name": "GET /api/tickets/:id — Ticket Detail",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-16] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-17] Returns ticket id and title', () => { const body = pm.response.json(); pm.expect(body).to.have.any.keys('id', 'title'); });"] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/tickets/{{ticketId}}", "host": ["{{baseUrl}}"], "path": ["api", "tickets", "{{ticketId}}"] },
+            "description": "Run Create Ticket first to populate ticketId."
+          }
+        },
+        {
+          "name": "GET /api/tickets/:id — Not Found (404)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-18] Status 404 Not Found', () => pm.response.to.have.status(404));"] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/tickets/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["api", "tickets", "00000000-0000-0000-0000-000000000000"] }
+          }
+        },
+        {
+          "name": "PATCH /api/tickets/:id/approve — Approve Response",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-19] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-20] Ticket status changes to resolved', () => { const body = pm.response.json(); pm.expect(body.data?.status ?? body.status).to.match(/resolved/i); });"] } }],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"approverId\": \"00000000-0000-0000-0000-000000000001\",\n  \"approvedText\": \"Based on the information provided, the motor may have triggered overcurrent protection. Please check relay protection settings and verify power supply specifications.\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/tickets/{{ticketId}}/approve", "host": ["{{baseUrl}}"], "path": ["api", "tickets", "{{ticketId}}", "approve"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copilot AI Engine",
+      "description": "AI analysis and safety check endpoints — available after CRM-28 Sprint 3",
+      "item": [
+        {
+          "name": "POST /api/copilot/analyze — Standard Ticket",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-21] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-22] Returns complete CopilotPackage', () => { const body = pm.response.json(); pm.expect(body.is_hazard_escalated).to.eql(false); pm.expect(body.draft_reply).to.be.a('string').and.not.empty; });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ticket_description\": \"ABB ACS550 drive displays fault code F-0001. Device stopped unexpectedly while running at 70% load.\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/copilot/analyze", "host": ["{{baseUrl}}"], "path": ["api", "copilot", "analyze"] }
+          }
+        },
+        {
+          "name": "POST /api/copilot/analyze — Hazard Keywords Detected",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('[TC-23] Status 200 OK', () => pm.response.to.have.status(200));", "pm.test('[TC-24] is_hazard_escalated is TRUE', () => { pm.expect(pm.response.json().is_hazard_escalated).to.eql(true); });", "pm.test('[TC-25] No draft_reply returned on hazard', () => { pm.expect(pm.response.json().draft_reply ?? '').to.be.empty; });"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ticket_description\": \"The control panel is emitting smoke and a burning smell. Power has been cut by the operator.\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/copilot/analyze", "host": ["{{baseUrl}}"], "path": ["api", "copilot", "analyze"] }
+          }
+        }
+      ]
+    }
+  ]
+}
+
