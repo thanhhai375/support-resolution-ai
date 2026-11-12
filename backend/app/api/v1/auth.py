@@ -26,6 +26,6 @@ def me(current_user: dict = Depends(get_current_user)) -> UserResponse:
 
 
 @router.get("/admin/ping")
-def admin_ping(current_user: dict = Depends(require_role("admin"))) -> dict:
-    """Admin-only health check endpoint; returns 403 for non-admin roles."""
+def admin_ping(current_user: dict = Depends(require_role("administrator"))) -> dict:
+    """Administrator-only health check endpoint; returns 403 for non-admin roles."""
     return {"message": "pong", "email": current_user["email"]}

@@ -18,7 +18,10 @@ AGENT_PASSWORD = "Agent@123"
 @pytest.fixture(scope="module", autouse=True)
 def _agent_user():
     user_repository.add_user(
-        AGENT_EMAIL, AGENT_PASSWORD, full_name="Support Agent", role="agent"
+        AGENT_EMAIL,
+        AGENT_PASSWORD,
+        full_name="Support Agent",
+        role="support_agent",
     )
 
 
@@ -56,7 +59,7 @@ def test_me_with_token():
     r = client.get("/api/auth/me", headers=_auth(_admin_token()))
     assert r.status_code == 200
     assert r.json()["email"] == settings.seed_admin_email
-    assert r.json()["role"] == "admin"
+    assert r.json()["role"] == "administrator"
 
 
 def test_me_without_token_401():
@@ -74,13 +77,13 @@ def test_me_expired_token_401():
 
 
 # --- Role-Based Access Control (403) ---------------------------------------
-def test_admin_route_allows_admin():
+def test_admin_route_allows_administrator():
     r = client.get("/api/auth/admin/ping", headers=_auth(_admin_token()))
     assert r.status_code == 200
     assert r.json()["message"] == "pong"
 
 
-def test_admin_route_forbidden_for_agent_403():
+def test_admin_route_forbidden_for_support_agent_403():
     token = _login(AGENT_EMAIL, AGENT_PASSWORD).json()["access_token"]
     r = client.get("/api/auth/admin/ping", headers=_auth(token))
     assert r.status_code == 403
@@ -88,6 +91,16 @@ def test_admin_route_forbidden_for_agent_403():
 
 def test_admin_route_without_token_is_401_not_403():
     assert client.get("/api/auth/admin/ping").status_code == 401
+
+
+def test_require_role_accepts_all_valid_roles():
+    dep = require_role(
+        "support_agent",
+        "technical_approver",
+        "knowledge_steward",
+        "administrator",
+    )
+    assert callable(dep)
 
 
 def test_require_role_rejects_unknown_role():

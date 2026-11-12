@@ -39,7 +39,7 @@ def _seed_admin() -> None:
         settings.seed_admin_email,
         settings.seed_admin_password,
         full_name="Administrator",
-        role="admin",
+        role="administrator",
         user_id="00000000-0000-0000-0000-000000000001",
     )
 
