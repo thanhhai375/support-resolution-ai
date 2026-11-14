@@ -10,6 +10,7 @@ const statusLabels: Record<TicketStatus, string> = {
   RESOLVED: 'Đã giải quyết',
   AI_SOLVED: 'Đã giải quyết',
   ESCALATED: 'Cảnh báo khẩn cấp',
+  CLOSED: 'Đã đóng',
 }
 const priorityLabels: Record<TicketPriority, string> = { LOW: 'Thấp', MEDIUM: 'Trung bình', HIGH: 'Cao', URGENT: 'Khẩn cấp' }
 const PAGE_SIZE = 7
@@ -62,6 +63,7 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
         <option value="PROCESSING">Đang xử lý</option>
         <option value="HAZARD_ESCALATED">Cảnh báo khẩn cấp</option>
         <option value="RESOLVED">Đã giải quyết</option>
+        <option value="CLOSED">Đã đóng</option>
       </select>
       <select aria-label="Lọc mức ưu tiên" value={priority} onChange={event => { setPriority(event.target.value); setPage(1) }}>
         <option value="ALL">Tất cả mức ưu tiên</option>

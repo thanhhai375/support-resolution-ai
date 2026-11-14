@@ -1,6 +1,5 @@
 import type { Ticket, TicketPriority, TicketStatus } from '../types/ticket'
 import { getStoredToken } from '../auth/token'
-import { DEMO_AUTH_ENABLED } from '../auth/demo'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -18,50 +17,194 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeStatus(value: unknown): TicketStatus {
   const status = String(value ?? 'PROCESSING').toUpperCase()
-  if (status === 'AI_SOLVED') return 'RESOLVED'
-  if (status === 'ESCALATED') return 'HAZARD_ESCALATED'
-  if (status === 'PENDING_REVIEW' || status === 'PROCESSING' || status === 'HAZARD_ESCALATED' || status === 'RESOLVED') return status
+
+  if (status === 'OPEN' || status === 'PENDING' || status === 'PENDING_REVIEW') {
+    return 'PENDING_REVIEW'
+  }
+
+  if (status === 'IN_PROGRESS' || status === 'PROCESSING') {
+    return 'PROCESSING'
+  }
+
+  if (status === 'CLOSED') return 'CLOSED'
+
+if (status === 'RESOLVED') return 'RESOLVED'
+
+if (status === 'AI_SOLVED') return 'AI_SOLVED'
+
+  if (status === 'ESCALATED' || status === 'HAZARD_ESCALATED') {
+    return 'HAZARD_ESCALATED'
+  }
+
   return 'PROCESSING'
 }
 
 function normalizePriority(value: unknown): TicketPriority {
   const priority = String(value ?? 'MEDIUM').toUpperCase()
-  return priority === 'LOW' || priority === 'MEDIUM' || priority === 'HIGH' || priority === 'URGENT' ? priority : 'MEDIUM'
+
+  if (priority === 'CRITICAL') return 'URGENT'
+
+  return priority === 'LOW'
+    || priority === 'MEDIUM'
+    || priority === 'HIGH'
+    || priority === 'URGENT'
+    ? priority
+    : 'MEDIUM'
 }
 
 function normalizeTicket(raw: unknown, index: number): Ticket {
   if (!isRecord(raw)) throw new Error(`Ticket tại vị trí ${index} không hợp lệ`)
   const responseTime = raw.responseTimeMinutes
   return {
-    id: String(raw.id ?? raw.ticketId ?? raw.caseId ?? `TK-${index + 1}`),
-    title: String(raw.title ?? raw.subject ?? 'Chưa có tiêu đề'),
-    customerName: String(raw.customerName ?? raw.requesterName ?? raw.customer ?? 'Khách hàng'),
+    id: String(raw.ticket_number ?? raw.id ?? raw.ticketId ?? raw.caseId ?? `TK-${index + 1}`),
+    title: String(raw.subject ?? raw.title ?? 'Chưa có tiêu đề').replace('Khách hàng', '').trim(),
+    customerName: String(
+      raw.customerName
+      ?? raw.customer_name
+      ?? raw.created_by
+      ?? raw.requesterName
+      ?? raw.customer
+      ?? 'Khách hàng'
+),
     status: normalizeStatus(raw.status),
     priority: normalizePriority(raw.priority),
     createdAt: String(raw.createdAt ?? raw.updatedAt ?? new Date().toISOString()),
     responseTimeMinutes: typeof responseTime === 'number' && Number.isFinite(responseTime) && responseTime >= 0 ? responseTime : null,
-    device: String(raw.device ?? raw.equipment ?? raw.category ?? 'Chưa xác định'),
-    safetyLabel: raw.safetyLabel === true || raw.safety_label === true || raw.safetyLabel === 'true',
-    description: typeof raw.description === 'string' ? raw.description : '',
-    assignee: typeof raw.assignee === 'string' ? raw.assignee : 'Chưa phân công',
+    device: String(raw.device ?? raw.equipment ?? raw.product_name ?? raw.productName ?? raw.category ?? 'Chưa xác định'),
+
+      safetyLabel: raw.safetyLabel === true
+        || raw.safety_label === true
+        || raw.is_hazard_escalated === true
+        || raw.safetyLabel === 'true',
+
+      serialNumber: String(raw.serial_number ?? raw.serialNumber ?? ''),
+
+      hazardReason: String(raw.hazard_reason ?? raw.hazardReason ?? ''),
+
+      description: typeof raw.description === 'string' ? raw.description : '',
+      assignee: typeof raw.assignee === 'string' ? raw.assignee : 'Chưa phân công',
   }
 }
 
 export async function getTickets(): Promise<{ tickets: Ticket[]; source: 'api' | 'mock' }> {
-  if (DEMO_AUTH_ENABLED) return { tickets: mockTickets, source: 'mock' }
   try {
     const token = getStoredToken()
-    const response = await fetch(`${API_BASE_URL}/api/tickets`, {
+    const response = await fetch(`${API_BASE_URL}/api/tickets?page=0&size=100`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal: AbortSignal.timeout(15000),
     })
     if (!response.ok) throw new Error(`API trả về HTTP ${response.status}`)
     const payload: unknown = await response.json()
-    const rows = Array.isArray(payload) ? payload : isRecord(payload) ? (payload.data ?? payload.tickets) : undefined
+    const rows = Array.isArray(payload)
+  ? payload
+  : isRecord(payload)
+    ? (payload.items ?? payload.data ?? payload.tickets)
+    : undefined
     if (!Array.isArray(rows)) throw new Error('API cần trả về mảng ticket hoặc object chứa data/tickets')
     return { tickets: rows.map(normalizeTicket), source: 'api' }
   } catch (error) {
     console.warn('Không tải được API /api/tickets:', error)
     return { tickets: mockTickets, source: 'mock' }
+  }
+}
+export interface TicketOption {
+  id: string
+  name: string
+}
+
+export interface TicketOptions {
+  products: TicketOption[]
+  categories: TicketOption[]
+}
+
+export async function getTicketOptions(): Promise<TicketOptions> {
+  const token = getStoredToken()
+
+  const response = await fetch(`${API_BASE_URL}/api/tickets/options`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal: AbortSignal.timeout(15000),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Không tải được danh sách sản phẩm và danh mục: HTTP ${response.status}`)
+  }
+
+  const payload: unknown = await response.json()
+
+  if (
+    !isRecord(payload)
+    || !Array.isArray(payload.products)
+    || !Array.isArray(payload.categories)
+  ) {
+    throw new Error('Dữ liệu sản phẩm hoặc danh mục không hợp lệ')
+  }
+
+  return {
+    products: payload.products.filter(
+      (item): item is TicketOption =>
+        isRecord(item)
+        && typeof item.id === 'string'
+        && typeof item.name === 'string'
+    ),
+    categories: payload.categories.filter(
+      (item): item is TicketOption =>
+        isRecord(item)
+        && typeof item.id === 'string'
+        && typeof item.name === 'string'
+    ),
+  }
+}
+export interface CreateTicketInput {
+  title: string
+  customerName: string
+  description: string
+  priority: TicketPriority
+  productId: string
+  categoryId: string
+  isHazardEscalated: boolean
+  hazardReason: string
+}
+
+export async function createTicket(input: CreateTicketInput): Promise<Ticket> {
+  const token = getStoredToken()
+
+  const response = await fetch(`${API_BASE_URL}/api/tickets`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+  subject: input.title,
+  description: input.description,
+  product_id: input.productId,
+  category_id: input.categoryId,
+  priority: input.priority === 'URGENT' ? 'CRITICAL' : input.priority,
+  created_by: input.customerName,
+  is_hazard_escalated: input.isHazardEscalated,
+  hazard_reason: input.isHazardEscalated ? input.hazardReason : null,
+}),
+    signal: AbortSignal.timeout(15000),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Không tạo được ticket: HTTP ${response.status} - ${errorText}`)
+  }
+
+  const payload: unknown = await response.json()
+
+  if (!isRecord(payload) || !isRecord(payload.data)) {
+    throw new Error('Dữ liệu ticket trả về không hợp lệ')
+  }
+
+  const raw = payload.data
+  const ticket = normalizeTicket(raw, 0)
+
+  return {
+    ...ticket,
+    customerName: input.customerName,
+    createdAt: String(raw.created_at ?? raw.createdAt ?? new Date().toISOString()),
+    priority: input.priority,
   }
 }

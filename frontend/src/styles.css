@@ -223,3 +223,311 @@ tbody tr:last-child td { border-bottom: 0; }
 .delete-confirm span { flex:1 0 100%; }
 .local-data-note { margin:15px 0 0; color:#9aa5b6; font-size:10px; line-height:1.6; }
 @media(max-width:720px) { .ticket-summary-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }.ticket-summary-row > div { padding:12px; }.ticket-summary-row strong { font-size:19px; }.ticket-form,.ticket-detail { padding:18px; }.form-actions { flex-wrap:wrap; }.form-actions button { flex:1; }.danger-ghost { margin-right:0; } }
+
+.evidence-panel,
+.missing-facts-panel {
+  background: #fff;
+  border: 1px solid #e0e7ff;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.evidence-panel h2,
+.missing-facts-panel h2 {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.evidence-panel,
+.missing-facts-panel {
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.evidence-panel p,
+.missing-facts-panel p,
+.evidence-panel li,
+.missing-facts-panel li {
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.evidence-card {
+  background: #f0f3ff;
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.evidence-card p {
+  color: #718096;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.source-viewer {
+  background: #fff;
+  border-left: 3px solid #4658f5;
+  padding: 14px;
+  margin-top: 12px;
+  border-radius: 6px;
+}
+
+.missing-fact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf0f7;
+  cursor: pointer;
+}
+
+.safety-alert-panel {
+  background: #fff0f1;
+  border: 1px solid #ffcdd2;
+  border-radius: 10px;
+  padding: 18px;
+  margin-top: 20px;
+  color: #d7263d;
+}
+
+.safety-alert-panel p {
+  color: #71343b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.evidence-source-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border: 1px solid #dce3ff;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4658f5;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.evidence-source-button:hover {
+  background: #eef1ff;
+  border-color: #4658f5;
+}
+
+.evidence-source-button:focus-visible {
+  outline: 2px solid #4658f5;
+  outline-offset: 2px;
+}
+.missing-facts-panel {
+  background: #ffffff;
+  border: 1px solid #dce3ff;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.missing-facts-panel h2 {
+  color: #172554;
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e5eaf5;
+}
+
+.missing-facts-progress {
+  color: #172554;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+/* Danh sách thông tin cần xác minh */
+.missing-facts-panel .missing-fact-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 4px;
+  border-bottom: 1px solid #e8edf7;
+  cursor: pointer;
+  color: #172554;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.missing-facts-panel .missing-fact-item:last-child {
+  border-bottom: none;
+}
+
+.missing-facts-panel .missing-fact-item:hover {
+  background: #f7f8ff;
+}
+
+.missing-facts-panel .missing-fact-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #4658f5;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.missing-facts-panel .missing-fact-item input:checked + span {
+  color: #718096;
+  text-decoration: line-through;
+}
+
+.safety-alert-panel {
+  margin-top: 16px;
+  padding: 16px;
+  background: #fff0f1;
+  border: 1px solid #ffd6da;
+  border-radius: 10px;
+}
+
+.safety-alert-panel h2 {
+  margin: 0 0 12px;
+  color: #e52e45 !important;
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+}
+
+.safety-alert-panel p {
+  margin: 0;
+  color: #7f2937 !important;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.7;
+}
+.safety-alert-panel h2 {
+  color: #e52e45 !important;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.safety-alert-panel p {
+  color: #7f2937 !important;
+}
+.evidence-panel *,
+.missing-facts-panel * {
+  font-size: 15px !important;
+  line-height: 1.7 !important;
+}
+
+.evidence-panel h2,
+.missing-facts-panel h2 {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  margin-bottom: 16px;
+}
+
+.ticket-detail .detail-section h3 {
+  font-size: 19px !important;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.ticket-detail .detail-section p {
+  font-size: 16px !important;
+  line-height: 1.8 !important;
+}
+
+.ticket-detail .conversation-item,
+.ticket-detail .conversation-item p,
+.ticket-detail .message-content {
+  font-size: 16px !important;
+  line-height: 1.8 !important;
+}
+
+.ticket-detail .recommendation-panel,
+.ticket-detail .recommendation-panel p,
+.ticket-detail .recommendation-panel li {
+  font-size: 16px !important;
+  line-height: 1.8 !important;
+}
+.conversation-panel h2 {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  margin-bottom: 18px;
+}
+
+.conversation-panel .message small {
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+
+.conversation-panel .message p {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+
+.conversation-panel .conversation-history {
+  font-size: 17px !important;
+}
+
+.ai-suggestion h2 {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  margin-bottom: 14px;
+}
+
+.ai-suggestion > strong {
+  font-size: 12px !important;
+}
+
+.ai-suggestion > p {
+  font-size: 14px !important;
+  line-height: 1.7 !important;
+}
+
+.ai-suggestion li {
+  font-size: 13px !important;
+  line-height: 1.7 !important;
+}
+
+.ai-suggestion > small {
+  font-size: 11px !important;
+}
+
+.ticket-info h2 {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  margin-bottom: 18px;
+}
+
+.ticket-info dt {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1.6 !important;
+}
+
+.ticket-detail-layout {
+  align-items: start;
+}
+
+.ticket-detail-main {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.ticket-detail-main > .conversation-panel {
+  height: auto;
+  min-height: 0;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+
+.ticket-detail-main > .conversation-panel .conversation-history {
+  height: auto;
+  min-height: 0;
+  flex: 0 0 auto;
+}
