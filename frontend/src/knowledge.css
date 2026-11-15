@@ -1,0 +1,22 @@
+﻿.kb-demo { padding: 12px 16px; border: 1px solid #e5d39c; border-radius: 10px; background: #fff9e9; color: #725617; line-height: 1.6; }
+.kb-toolbar { display:flex; align-items:end; gap:16px; margin:20px 0; flex-wrap:wrap; }
+.kb-toolbar .search-box { flex:1; min-width:200px; }
+.kb-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin-top:18px; }
+.kb-card { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.kb-card h2 { font-size:17px; margin:0; }
+.kb-card p { line-height:1.7; margin:0; }
+.kb-card button { margin-top:auto; align-self:start; }
+.kb-tags { display:flex; flex-wrap:wrap; gap:8px; }
+.kb-tags span { background:#eef2ff; color:#394a85; border-radius:6px; padding:5px 8px; font-size:12px; }
+.kb-pagination { display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:18px; margin:24px 0; }
+.kb-empty { text-align:center; padding:48px 20px; margin-top:20px; }
+.kb-dialog { width:min(760px,calc(100% - 24px)); max-height:calc(100dvh - 32px); padding:0; border:1px solid #d9deeb; border-radius:16px; color:#25314d; background:white; box-sizing:border-box; box-shadow:0 24px 80px #14203e40; }
+.kb-dialog::backdrop { background:#101b37a6; }
+.kb-dialog-body { padding:24px; overflow-wrap:anywhere; }
+.kb-dialog-body header,.kb-dialog-body footer { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.kb-dialog-body header h2 { margin:8px 0; font-size:21px; }
+.kb-dialog-body header button { flex-shrink:0; }
+.kb-source-page { background:#f7f8fc; border:1px solid #dce2ef; border-radius:10px; padding:24px; margin:20px 0; }
+.kb-source-page blockquote { margin:16px 0 0; border-left:3px solid #6676df; padding-left:16px; line-height:1.9; }
+@media(max-width:1100px) { .kb-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:640px) { .kb-grid { grid-template-columns:1fr; } .kb-toolbar { align-items:stretch; flex-direction:column; } .kb-dialog-body { padding:16px; } .kb-dialog-body footer { align-items:start; flex-direction:column; } }
