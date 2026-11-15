@@ -8,9 +8,15 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # Cấu hình Database PostgreSQL
 DATABASE_URL = "postgresql+asyncpg://postgres:secretpassword@localhost:5432/support_resolution_db"
 
-engine = create_async_engine(DATABASE_URL, echo=True, future=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
+
+try:
+    engine = create_async_engine(DATABASE_URL, echo=True, future=True)
+    AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+except Exception:
+    # Fallback to in-memory sqlite if asyncpg driver is not available locally
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False, future=True)
+    AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db():
     async with AsyncSessionLocal() as session:
@@ -38,8 +44,9 @@ app = FastAPI(
 )
 
 # Đăng ký router ở cuối file để tránh vòng lặp import
-from routers import tickets
+from routers import tickets, copilot
 app.include_router(tickets.router)
+app.include_router(copilot.router)
 
 @app.get("/")
 def root():
