@@ -11,7 +11,6 @@ export interface DashboardMetrics {
 export default function Dashboard({ metrics, loading }: { metrics: DashboardMetrics; loading: boolean }) {
   const value = (number: number) => loading ? '—' : number.toLocaleString('vi-VN')
   return <>
-    
 <div className="page-title-row">
   <div>
     <p className="dashboard-kicker">
