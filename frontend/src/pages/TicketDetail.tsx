@@ -1,3 +1,6 @@
+import SourceViewer from '../components/SourceViewer'
+import { knowledgeExcerpts } from '../data/knowledge'
+import type { KnowledgeExcerpt } from '../data/knowledge'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -23,23 +26,6 @@ function statusClass(status: TicketStatus) {
 }
 const priorities: Record<TicketPriority, string> = { LOW: 'Thấp', MEDIUM: 'Trung bình', HIGH: 'Cao', URGENT: 'Khẩn cấp' }
 
-const evidenceItems = [
-  {
-    id: 1,
-    title: 'Hướng dẫn xử lý lỗi quá nhiệt',
-    page: 45,
-    description: 'Quy trình dừng vận hành, kiểm tra quạt và khe thoát nhiệt.',
-    content: 'Khi thiết bị quá nhiệt, cần dừng vận hành để kiểm tra hệ thống làm mát. Không tiếp tục vận hành khi chưa xác định được nguyên nhân.'
-  },
-  {
-    id: 2,
-    title: 'Thông số môi trường vận hành',
-    page: 12,
-    description: 'Điều kiện môi trường và giới hạn vận hành.',
-    content: 'Kiểm tra nhiệt độ môi trường, độ thông thoáng và giới hạn vận hành theo tài liệu kỹ thuật của thiết bị.'
-  }
-]
-
 export default function TicketDetail() {
   const { ticketId } = useParams()
   const { tickets, loading, updateTicket, deleteTicket } = useTickets()
@@ -48,7 +34,7 @@ export default function TicketDetail() {
   const [reply, setReply] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [checkedFacts, setCheckedFacts] = useState<string[]>([])
-const [selectedEvidence, setSelectedEvidence] = useState<number | null>(null)
+const [selectedEvidence, setSelectedEvidence] = useState<KnowledgeExcerpt | null>(null)
 
 const missingFacts = [
   'Model thiết bị',
@@ -67,6 +53,7 @@ function toggleFact(fact: string) {
   if (loading) return <p role="status">Đang tải ticket…</p>
   if (!ticket) return <section className="panel"><h1>Không tìm thấy ticket</h1><Link to="/tickets" className="text-link">Về danh sách ticket</Link></section>
   const replies = ticket.replies ?? []
+  const evidenceItems = knowledgeExcerpts.filter(item => item.productLine === (/drive|biến tần/i.test(ticket.device) ? 'Drives' : 'Motors')).slice(0, 2)
 
   function sendReply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -135,32 +122,17 @@ return <>
 
       <section className="evidence-panel">
         <h2>Bằng chứng và tài liệu nguồn (Citations)</h2>
+        <p className="subtitle">Citation minh họa từ kho tri thức mẫu; chưa liên kết bằng chứng thực tế của ticket.</p>
         {evidenceItems.map(item => (
           <article className="evidence-card" key={item.id}>
             <div>
               <strong>
                 [{item.id}] {item.title} — Trang {item.page}
               </strong>
-              <p>{item.description}</p>
+              <p>{item.content}</p>
             </div>
 
-            <button
-              className="evidence-source-button"
-              onClick={() => setSelectedEvidence(
-                selectedEvidence === item.id ? null : item.id
-              )}
-            >
-              {selectedEvidence === item.id
-                ? 'Đóng tài liệu'
-                : 'Xem tài liệu nguồn'}
-            </button>
-
-            {selectedEvidence === item.id && (
-              <div className="source-viewer">
-                <strong>Nội dung tài liệu nguồn</strong>
-                <p>{item.content}</p>
-              </div>
-            )}
+            <button className="evidence-source-button" onClick={() => setSelectedEvidence(item)}>Xem tài liệu nguồn {item.id}</button>
           </article>
         ))}
       </section>
@@ -273,6 +245,7 @@ return <>
     </aside>
   </div>
 
+  <SourceViewer excerpt={selectedEvidence} onClose={() => setSelectedEvidence(null)} />
   <div className="detail-footer">
     <span>Phản hồi và cập nhật được lưu trên trình duyệt này.</span>
     {confirmDelete ? (

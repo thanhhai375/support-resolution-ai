@@ -4,7 +4,7 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "baseUrl", "value": "http://localhost:8080" },
     { "key": "email", "value": "admin@example.com" },
     { "key": "password", "value": "Admin@123" },
     { "key": "accessToken", "value": "" }
@@ -72,6 +72,33 @@
               "path": ["api", "auth", "me"]
             },
             "description": "Run login first. Remove/alter the Authorization header to verify 401 Unauthorized."
+          }
+        },
+        {
+          "name": "GET /api/auth/admin/ping (RBAC check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK for admin', () => pm.response.to.have.status(200));",
+                  "pm.test('returns pong', () => {",
+                  "  pm.expect(pm.response.json().message).to.eql('pong');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/admin/ping",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "admin", "ping"]
+            },
+            "description": "Protected by require_role('admin'). Returns 200 OK for admin, 403 Forbidden for other roles, 401 Unauthorized without token."
           }
         }
       ]
