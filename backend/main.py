@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
@@ -7,11 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # Cấu hình Database PostgreSQL
-DATABASE_URL = "postgresql+asyncpg://songnhat:songnhat_dev@127.0.0.1:5432/songnhat_copilot"
+DATABASE_URL = "postgresql+asyncpg://postgres:secretpassword@localhost:5432/support_resolution_db"
 
-engine = create_async_engine(DATABASE_URL, echo=True, future=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
+
+try:
+    engine = create_async_engine(DATABASE_URL, echo=True, future=True)
+    AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+except Exception:
+    # Fallback to in-memory sqlite if asyncpg driver is not available locally
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False, future=True)
+    AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db():
     async with AsyncSessionLocal() as session:
@@ -19,17 +24,14 @@ async def get_db():
 
 # Pydantic Schemas
 class TicketCreateRequest(BaseModel):
-    subject: str
-    description: Optional[str] = None
-    product_id: UUID
-    category_id: UUID
-    priority: Optional[str] = "MEDIUM"
-    created_by: Optional[str] = None
-    is_hazard_escalated: bool = False
-    hazard_reason: Optional[str] = None
+    title: str
+    description: str
+    category_id: Optional[UUID] = None
+    priority: Optional[str] = "medium"
+    created_by: UUID
 
 class TicketApprovalRequest(BaseModel):
-    approver_id: str = Field(..., alias="approverId")
+    approver_id: UUID = Field(..., alias="approverId")
     approved_text: str = Field(..., alias="approvedText")
 
     class Config:
@@ -40,20 +42,11 @@ app = FastAPI(
     title="SongNhat Support Resolution Copilot API",
     version="2.0.0"
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Đăng ký router ở cuối file để tránh vòng lặp import
-from routers import tickets
+from routers import tickets, copilot
 app.include_router(tickets.router)
+app.include_router(copilot.router)
 
 @app.get("/")
 def root():

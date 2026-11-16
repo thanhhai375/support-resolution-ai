@@ -68,7 +68,13 @@ function normalizeTicket(raw: unknown, index: number): Ticket {
 ),
     status: normalizeStatus(raw.status),
     priority: normalizePriority(raw.priority),
-    createdAt: String(raw.createdAt ?? raw.updatedAt ?? new Date().toISOString()),
+    createdAt: String(
+  raw.created_at
+  ?? raw.createdAt
+  ?? raw.updated_at
+  ?? raw.updatedAt
+  ?? new Date().toISOString()
+),
     responseTimeMinutes: typeof responseTime === 'number' && Number.isFinite(responseTime) && responseTime >= 0 ? responseTime : null,
     device: String(raw.device ?? raw.equipment ?? raw.product_name ?? raw.productName ?? raw.category ?? 'Chưa xác định'),
 
@@ -175,15 +181,15 @@ export async function createTicket(input: CreateTicketInput): Promise<Ticket> {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
-  subject: input.title,
-  description: input.description,
-  product_id: input.productId,
-  category_id: input.categoryId,
-  priority: input.priority === 'URGENT' ? 'CRITICAL' : input.priority,
-  created_by: input.customerName,
-  is_hazard_escalated: input.isHazardEscalated,
-  hazard_reason: input.isHazardEscalated ? input.hazardReason : null,
-}),
+    subject: input.title,
+    description: input.description,
+    product_id: input.productId,
+    category_id: input.categoryId,
+    priority: input.priority === 'URGENT' ? 'CRITICAL' : input.priority,
+    created_by: input.customerName,
+    is_hazard_escalated: input.isHazardEscalated,
+    hazard_reason: input.isHazardEscalated ? input.hazardReason : null,
+  }),
     signal: AbortSignal.timeout(15000),
   })
 

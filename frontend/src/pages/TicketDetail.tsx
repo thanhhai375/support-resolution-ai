@@ -98,6 +98,18 @@ return <>
     </div>
   </div>
 
+  {ticket.safetyLabel && (
+    <section className="safety-alert-panel">
+      <h2>⚠ CẢNH BÁO AN TOÀN — KHẨN CẤP</h2>
+      <p>
+        {ticket.hazardReason?.trim() &&
+          ticket.hazardReason.trim().toLowerCase() !== 'sdsd'
+            ? ticket.hazardReason
+            : 'Chưa có mô tả nguy cơ đầy đủ. Cần xác minh tình trạng an toàn của thiết bị trước khi hướng dẫn khách hàng tiếp tục vận hành.'}
+                </p>
+    </section>
+  )}
+
   <div className="ticket-detail-layout">
     <div className="ticket-detail-main">
       <section className="panel conversation-panel">
@@ -170,16 +182,6 @@ return <>
           </label>
         ))}
       </section>
-
-      {ticket.safetyLabel && (
-        <section className="safety-alert-panel">
-          <h2>⚠ CẢNH BÁO AN TOÀN — KHẨN CẤP</h2>
-          <p>
-            {ticket.hazardReason ||
-              'Ticket có dấu hiệu liên quan đến an toàn. Cần kiểm tra kỹ thông tin và xác minh nguyên nhân trước khi hướng dẫn khách hàng tiếp tục vận hành.'}
-          </p>
-        </section>
-      )}
 
       <form className="reply-form" onSubmit={sendReply}>
         <label className="sr-only" htmlFor="ticket-reply">
