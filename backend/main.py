@@ -69,3 +69,7 @@ app.include_router(copilot.router)
 @app.get("/")
 def root():
     return {"message": "SongNhat Copilot Backend is running successfully!"}
+from routers import tickets, copilot, knowledge
+app.include_router(tickets.router)
+app.include_router(copilot.router)
+app.include_router(knowledge.router)
