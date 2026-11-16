@@ -1,9 +1,9 @@
-"""Pydantic schemas for Copilot Engine (Task CRM-24)."""
+"""Pydantic schemas for Copilot Engine & Support Package (Tasks CRM-24 & CRM-28)."""
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class IntentEnum(str, Enum):
@@ -43,7 +43,7 @@ class CaseSummary(BaseModel):
     )
     confirmed_observation: Optional[str] = Field(
         default=None,
-        description="Các quan sát kỹ thuật đã được xác nhận từ mô tả",
+        description="Các quan sát kỹ thuật đã được xác nhận từ mô tả hoặc tài liệu",
     )
     outstanding_questions: Optional[str] = Field(
         default=None,
@@ -51,41 +51,89 @@ class CaseSummary(BaseModel):
     )
 
 
+class CopilotAnalyzeRequest(BaseModel):
+    """Yêu cầu phân tích ticket độc lập từ Frontend hoặc API."""
+
+    ticket_description: str = Field(
+        ...,
+        description="Nội dung tiêu đề hoặc mô tả sự cố kỹ thuật của ticket",
+        examples=["Biến tần báo lỗi F0022 khi tăng tốc"],
+    )
+
+
 class CopilotPackageResponse(BaseModel):
-    """Gói kết quả phân tích sự cố và trích xuất bằng chứng từ Copilot Engine."""
+    """Gói Support Package đầy đủ 5 thành phần bắt buộc + cờ an toàn (Task CRM-28 & SUP-01 - SUP-08)."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     intent: IntentEnum = Field(
         ...,
-        description="Ý định chính của ticket sau khi phân loại",
+        description="Ý định chính của ticket sau khi phân loại (DOCUMENT_REQUEST, SERVICE_PROGRESS, TECHNICAL_ESCALATION)",
     )
     summary: CaseSummary = Field(
         ...,
-        description="Bản tóm tắt sự cố có cấu trúc",
+        description="Bản tóm tắt sự cố có cấu trúc (reported_symptom, confirmed_observation, outstanding_questions)",
     )
     missing_facts: List[str] = Field(
         default_factory=list,
-        description="Danh sách các thông tin kỹ thuật còn thiếu (VD: Mã Serial, Phiên bản Firmware)",
-    )
-    draft_response: str = Field(
-        ...,
-        description="Bản nháp phản hồi tiếng Việt trung tính, giới hạn dưới 180 từ",
+        description="Danh sách các thông tin kỹ thuật còn thiếu (Mã Serial, Firmware, Tải, v.v.)",
     )
     citations: List[CitationItem] = Field(
         default_factory=list,
-        description="Danh sách các trích dẫn bằng chứng từ cơ sở tri thức",
+        description="Danh sách các trích dẫn bằng chứng từ cơ sở tri thức (knowledge_passages)",
+    )
+    next_step: str = Field(
+        default="Chuyển kỹ sư chuyên trách kiểm tra.",
+        description="Hành động xử lý tiếp theo đề xuất cho kỹ thuật viên",
+    )
+    draft: str = Field(
+        ...,
+        description="Bản nháp phản hồi khách hàng bằng tiếng Việt trung tính, bắt buộc dưới 180 từ",
+    )
+    draft_response: Optional[str] = Field(
+        default=None,
+        description="Alias tương thích ngược với Task CRM-24",
+    )
+    draft_reply: Optional[str] = Field(
+        default=None,
+        description="Alias tương thích với Postman Collection TC-22 & TC-25",
     )
     is_hazard_escalated: bool = Field(
         default=False,
-        description="Cờ đánh dấu ngắt an toàn khẩn cấp khi phát hiện nguy cơ cháy nổ/điện giật",
+        description="Cờ đánh dấu ngắt an toàn khẩn cấp khi phát hiện nguy cơ cháy nổ/điện giật/khói",
     )
 
-    @field_validator("draft_response")
+    @model_validator(mode="before")
     @classmethod
-    def validate_word_limit(cls, value: str) -> str:
+    def sync_draft_fields(cls, data: Any) -> Any:
+        """Đồng bộ các thuộc tính draft, draft_response và draft_reply."""
+        if isinstance(data, dict):
+            # Lấy nội dung draft từ bất kỳ trường nào có sẵn
+            content = data.get("draft") or data.get("draft_response") or data.get("draft_reply") or ""
+            if not data.get("draft"):
+                data["draft"] = content
+            if not data.get("draft_response"):
+                data["draft_response"] = content
+            if "draft_reply" not in data or data["draft_reply"] is None:
+                # Postman TC-25 yêu cầu draft_reply rỗng khi có nguy hiểm
+                if data.get("is_hazard_escalated", False):
+                    data["draft_reply"] = ""
+                else:
+                    data["draft_reply"] = content
+        return data
+
+    @field_validator("draft", "draft_response")
+    @classmethod
+    def validate_word_limit(cls, value: Optional[str]) -> Optional[str]:
         """Đảm bảo bản nháp phản hồi không vượt quá 180 từ."""
-        word_count = len(value.split())
-        if word_count >= 180:
-            raise ValueError(
-                f"draft_response phải dưới 180 từ (hiện tại: {word_count} từ)."
-            )
+        if value:
+            word_count = len(value.split())
+            if word_count >= 180:
+                raise ValueError(
+                    f"Bản nháp phản hồi phải dưới 180 từ (hiện tại: {word_count} từ)."
+                )
         return value
+
+
+# Alias SupportPackageOut theo chuẩn SongNhat RFP
+SupportPackageOut = CopilotPackageResponse

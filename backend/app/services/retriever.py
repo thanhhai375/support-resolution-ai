@@ -1,6 +1,8 @@
-"""Knowledge Base Retriever service for extracting technical citations (Task CRM-24)."""
+"""Knowledge Base Retriever service for extracting technical citations (Tasks CRM-24 & CRM-28)."""
 
+import inspect
 import logging
+import re
 from typing import Any, List, Optional
 
 from app.schemas.copilot import CitationItem
@@ -9,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
-    """Trả về danh sách 2-3 CitationItem mẫu để chạy độc lập khi chưa có kết nối DB.
+    """Trả về danh sách 2-3 CitationItem mẫu để chạy độc lập khi chưa có kết nối DB hoặc bảng rỗng.
 
     Args:
         query: Câu truy vấn hoặc mô tả sự cố từ ticket.
@@ -19,7 +21,7 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
     """
     query_lower = query.lower()
 
-    if "f0022" in query_lower or "biến tần" in query_lower or "tăng tốc" in query_lower:
+    if any(k in query_lower for k in ["f0022", "biến tần", "tăng tốc", "inverter"]):
         return [
             CitationItem(
                 document_title="Tài liệu Hướng dẫn Xử lý Lỗi Biến tần SongNhat SN-G120",
@@ -46,6 +48,46 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                     "Đối với các lỗi ngắt mạch phần cứng trên biến tần, nhân viên hỗ trợ "
                     "cần thu thập Mã Serial (S/N), Phiên bản Firmware, thông số dòng điện "
                     "tại thời điểm ngắt (r0027) và ảnh chụp nhãn động cơ."
+                ),
+            ),
+        ]
+
+    if any(k in query_lower for k in ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet"]):
+        return [
+            CitationItem(
+                document_title="Tài liệu Hướng dẫn Vận hành & Cài đặt Biến tần SongNhat SN-G120",
+                page_number=15,
+                content_snippet=(
+                    "Sơ đồ đấu nối mạch động lực và điều khiển: Chân DI0-DI3 nhận tín hiệu "
+                    "kích hoạt RUN/STOP, cổng RS485 hỗ trợ giao thức Modbus RTU cho PLC."
+                ),
+            ),
+            CitationItem(
+                document_title="Sơ đồ Đấu nối Điều khiển và Động lực Hệ thống Tự động hóa SongNhat",
+                page_number=32,
+                content_snippet=(
+                    "Bản vẽ sơ đồ nguyên lý mạch điều khiển biến tần và động cơ xoay chiều: "
+                    "Yêu cầu gắn biến trở điều tốc tại chân AI0 và điện trở xả hãm nếu tải quán tính lớn."
+                ),
+            ),
+        ]
+
+    if any(k in query_lower for k in ["tiến độ", "bảo hành", "sửa", "dịch vụ"]):
+        return [
+            CitationItem(
+                document_title="Quy trình Tiếp nhận Dịch vụ & Tra cứu Tiến độ Sửa chữa SongNhat",
+                page_number=8,
+                content_snippet=(
+                    "Mỗi phiếu dịch vụ được cấp mã theo dõi duy nhất. Nhân viên dịch vụ có trách "
+                    "nhiệm cập nhật tình trạng kiểm tra và thời gian hoàn tất dự kiến trong vòng 24 giờ."
+                ),
+            ),
+            CitationItem(
+                document_title="Chính sách Bảo hành & Thời hạn Trả máy Thiết bị Tự động hóa",
+                page_number=14,
+                content_snippet=(
+                    "Thời gian thẩm định và thông báo phương án xử lý sự cố thiết bị không vượt quá "
+                    "48 giờ làm việc kể từ thời điểm nhận thiết bị tại trung tâm dịch vụ."
                 ),
             ),
         ]
@@ -79,7 +121,7 @@ class KnowledgeRetriever:
         db: Optional[Any] = None,
         limit: int = 3,
     ) -> List[CitationItem]:
-        """Truy vấn bảng `knowledge_passages` hoặc fallback về Mock Data khi db=None.
+        """Truy vấn bảng `knowledge_passages` hoặc fallback về Mock Data khi db=None hoặc rỗng.
 
         Args:
             query: Nội dung truy vấn tìm kiếm tài liệu.
@@ -93,55 +135,94 @@ class KnowledgeRetriever:
             return get_mock_knowledge_passages(query)[:limit]
 
         try:
-            # Truy vấn bảng knowledge_passages khi có kết nối Database thực tế
-            from sqlalchemy import text
+            try:
+                from models import KnowledgePassage
+            except ImportError:
+                from backend.models import KnowledgePassage
 
-            sql = text(
-                """
-                SELECT document_title, page_number, content_snippet
-                FROM knowledge_passages
-                WHERE content_snippet ILIKE :pattern
-                   OR document_title ILIKE :pattern
-                LIMIT :limit
-                """
-            )
-            params = {"pattern": f"%{query.strip()}%", "limit": limit}
+            from sqlalchemy import or_, select
 
-            result = db.execute(sql, params)
-            if hasattr(result, "__await__"):
+            # Trích xuất các từ khóa đặc trưng (Mã lỗi, model hoặc từ có độ dài >= 4)
+            keywords: List[str] = []
+            error_codes = re.findall(r"[A-Za-z0-9]+-[A-Za-z0-9]+|[A-Za-z]\d{3,5}", query)
+            keywords.extend(error_codes)
+
+            for w in query.strip().split():
+                clean_w = re.sub(r"[^\w]", "", w)
+                if (
+                    len(clean_w) >= 4
+                    and clean_w.lower() not in ["biến", "động", "thiết", "thường", "không"]
+                ):
+                    keywords.append(clean_w)
+
+            if not keywords:
+                keywords = [query.strip()]
+
+            filters = []
+            for kw in keywords[:4]:
+                pattern = f"%{kw}%"
+                filters.append(KnowledgePassage.passage_content.ilike(pattern))
+                filters.append(KnowledgePassage.document_name.ilike(pattern))
+                filters.append(KnowledgePassage.section_name.ilike(pattern))
+
+            stmt = select(KnowledgePassage).where(or_(*filters)).limit(limit)
+
+            result = db.execute(stmt)
+            if inspect.isawaitable(result):
                 result = await result
 
-            rows = result.fetchall()
-            if rows:
-                return [
-                    CitationItem(
-                        document_title=str(row.document_title),
-                        page_number=int(row.page_number),
-                        content_snippet=str(row.content_snippet),
+            passages = (
+                result.scalars().all()
+                if hasattr(result, "scalars")
+                else result.fetchall()
+            )
+
+            if passages:
+                citations: List[CitationItem] = []
+                for p in passages:
+                    doc_title = (
+                        getattr(p, "document_title", None)
+                        or getattr(p, "document_name", None)
+                        or "Tài liệu kỹ thuật SongNhat"
                     )
-                    for row in rows
-                ]
+                    snippet = (
+                        getattr(p, "content_snippet", None)
+                        or getattr(p, "passage_content", None)
+                        or ""
+                    )
+                    page_num = getattr(p, "page_number", 1) or 1
+                    citations.append(
+                        CitationItem(
+                            document_title=str(doc_title),
+                            page_number=int(page_num),
+                            content_snippet=str(snippet),
+                        )
+                    )
+                return citations
         except Exception as exc:
             logger.warning(
                 "Không thể truy vấn bảng knowledge_passages (%s), chuyển sang dùng Mock Data.",
                 exc,
             )
 
+        # Fallback về Mock Data khi bảng rỗng hoặc có lỗi
         return get_mock_knowledge_passages(query)[:limit]
 
 
 async def search_knowledge_passages(
     query: str,
     db: Optional[Any] = None,
+    limit: int = 3,
 ) -> List[CitationItem]:
     """Hàm tiện ích truy vấn tài liệu kiến thức từ bảng `knowledge_passages`.
 
     Args:
         query: Câu truy vấn tìm kiếm bằng chứng kỹ thuật.
         db: Kết nối cơ sở dữ liệu (tùy chọn).
+        limit: Số lượng kết quả tối đa.
 
     Returns:
         Danh sách `CitationItem` phù hợp.
     """
     retriever = KnowledgeRetriever()
-    return await retriever.search_knowledge_passages(query=query, db=db)
+    return await retriever.search_knowledge_passages(query=query, db=db, limit=limit)
