@@ -4,15 +4,34 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
+from app.repositories import revocation_repository
 from app.services import auth_service
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def get_bearer_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> str:
+    """Return the raw Bearer token string from the Authorization header, or raise 401."""
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
-    """Extract and validate the current user from the Bearer token, or raise 401."""
+    """Extract and validate the current user from the Bearer token, or raise 401/503."""
+    if not revocation_repository.is_authoritative_check_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authoritative authorization service unavailable; failing closed",
+        )
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
