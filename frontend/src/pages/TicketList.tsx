@@ -60,7 +60,8 @@ useEffect(() => {
 
   const sortedTickets = useMemo(() => [...tickets].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [tickets])
 
-  function submitCreate(event: FormEvent<HTMLFormElement>) {
+  
+async function submitCreate(event: FormEvent<HTMLFormElement>) {
   event.preventDefault()
 
   if (!title.trim() || !customerName.trim()) {
@@ -73,27 +74,38 @@ useEffect(() => {
     return
   }
 
-  onCreate({
-  title: title.trim(),
-  customerName: customerName.trim(),
-  description: description.trim(),
-  priority,
-  productId,
-  categoryId,
-  isHazardEscalated,
-  hazardReason: hazardReason.trim(),
-})
-
-  setTitle('')
-  setCustomerName('')
-  setDescription('')
-  setPriority('MEDIUM')
-  setProductId('')
-  setCategoryId('')
-  setIsHazardEscalated(false)
-  setHazardReason('')
   setFormError('')
-  setCreating(false)
+
+  try {
+    await onCreate({
+      title: title.trim(),
+      customerName: customerName.trim(),
+      description: description.trim(),
+      priority,
+      productId,
+      categoryId,
+      isHazardEscalated,
+      hazardReason: hazardReason.trim(),
+    })
+
+    // Chỉ đóng form khi tạo ticket thành công
+    setTitle('')
+    setCustomerName('')
+    setDescription('')
+    setPriority('MEDIUM')
+    setProductId('')
+    setCategoryId('')
+    setIsHazardEscalated(false)
+    setHazardReason('')
+    setCreating(false)
+
+  } catch (error) {
+    setFormError(
+      error instanceof Error
+        ? error.message
+        : 'Không thể tạo ticket. Vui lòng thử lại.'
+    )
+  }
 }
 
   return (

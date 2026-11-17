@@ -11,15 +11,29 @@ export interface DashboardMetrics {
 export default function Dashboard({ metrics, loading }: { metrics: DashboardMetrics; loading: boolean }) {
   const value = (number: number) => loading ? '—' : number.toLocaleString('vi-VN')
   return <>
-    <div className="page-title-row">
-      <div><h1>Tổng quan hệ thống</h1><p className="subtitle">Theo dõi tình hình tiếp nhận và xử lý yêu cầu hỗ trợ.</p></div>
-      <span className="date-filter">Dữ liệu hiện tại</span>
-    </div>
+<div className="page-title-row">
+  <div>
+    <p className="dashboard-kicker">
+      SONGNHAT COPILOT / TECHNICAL SUPPORT
+    </p>
+
+    <h1>Trung tâm hỗ trợ kỹ thuật</h1>
+
+    <p className="subtitle">
+      Quản lý yêu cầu hỗ trợ động cơ, biến tần
+      và theo dõi an toàn vận hành.
+    </p>
+  </div>
+
+  <span className="date-filter">
+    Tổng quan ticket
+  </span>
+</div>
 
     <div className="stats-grid dashboard-stats">
       <StatCard label="Tổng số ticket" value={value(metrics.total)} helper="Tất cả yêu cầu đã ghi nhận" icon="▤" tone="blue" />
       <StatCard label="Chờ duyệt" value={value(metrics.pendingReview)} helper="Ticket đang chờ nhân viên xác nhận" icon="◷" tone="orange" />
-      <StatCard label="Cảnh báo khẩn cấp" value={value(metrics.hazardEscalated)} helper="Ticket cần ưu tiên xử lý an toàn" icon="⚠" tone="purple" />
+      <StatCard label="Cảnh báo khẩn cấp" value={value(metrics.hazardEscalated)} helper="Ticket cần ưu tiên xử lý an toàn" icon="⚠" tone="red" />
       <StatCard label="Đã giải quyết" value={value(metrics.resolved)} helper="Ticket đã hoàn tất xử lý" icon="✓" tone="green" />
     </div>
 
