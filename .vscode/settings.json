@@ -1,0 +1,13 @@
+{
+  "terminal.integrated.env.windows": {
+    "PATH": "C:\\Program Files\\nodejs;${env:PATH}"
+  },
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/support-resolution-ai/backend",
+    "${workspaceFolder}/backend"
+  ],
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}/support-resolution-ai/backend",
+    "${workspaceFolder}/backend"
+  ]
+}
