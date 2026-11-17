@@ -1,3 +1,4 @@
+import ReviewApprovalPanel from '../components/ReviewApprovalPanel'
 import SourceViewer from '../components/SourceViewer'
 import { knowledgeExcerpts } from '../data/knowledge'
 import type { KnowledgeExcerpt } from '../data/knowledge'
@@ -173,6 +174,8 @@ return <>
     </div>
 
     <aside className="ticket-detail-side">
+      <ReviewApprovalPanel ticket={ticket} />
+      
       <section className="panel ticket-info">
         <h2>Thông tin ticket</h2>
         <dl>

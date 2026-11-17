@@ -1,0 +1,22 @@
+.crm30-review { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 20px; }
+.crm30-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.crm30-review .crm30-header h2 { font-size: 19px !important; margin: 4px 0 0; }
+.crm30-kicker { color: #5969c7; font-size: 11px; font-weight: 750; letter-spacing: .02em; }
+.crm30-status { display: inline-block; border-radius: 100px; padding: 5px 9px; font-size: 11px; font-weight: 700; }
+.crm30-status-pending { color: #9d6d19; background: #fff5df; }
+.crm30-status-approved { color: #12754c; background: #e7f8ee; }
+.crm30-status-rejected { color: #a93030; background: #fff0f0; }
+.crm30-label { display: block; font-size: 12px; font-weight: 700; color: #35445f; }
+.crm30-editor, .crm30-reject-box textarea { width: 100%; padding: 12px; border: 1px solid #dce3f2; border-radius: 10px; background: #fff; color: #24324b; font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
+.crm30-editor:focus-visible, .crm30-reject-box textarea:focus-visible { outline: 2px solid #5976ec; outline-offset: 1px; }
+.crm30-helper, .crm30-disclaimer { margin: 0; color: #6a7791; font-size: 11px; line-height: 1.6; }
+.crm30-disclaimer { border-top: 1px solid #edf0f7; padding-top: 12px; }
+.crm30-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.crm30-actions button { flex: 1 1 120px; min-height: 40px; border-radius: 9px; padding: 9px 12px; font-size: 12px; font-weight: 700; line-height: 1.45; text-align: center; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.crm30-neutral { background: #fff; border: 1px solid #d6ddea; color: #4d5e7d; }
+.crm30-reject-confirm { background: #b63e3e; border: 1px solid #b63e3e; color: #fff; }
+.crm30-approve { background: #4568e8; color: #fff; border: 1px solid #4568e8; }
+.crm30-approve:disabled { opacity: .5; cursor: not-allowed; }
+.crm30-reject-box { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid #f0cccc; border-radius: 10px; background: #fffafa; }
+.crm30-reason { overflow-wrap: anywhere; font-size: 12px; color: #8d3939; }
+.crm30-message { margin: 0; font-size: 12px; color: #244f81; line-height: 1.55; }
