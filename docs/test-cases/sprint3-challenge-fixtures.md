@@ -1,10 +1,4 @@
 # CRM-33 – 80 Independent Challenge Fixtures (Sprint 3)
-
-**Project:** AI-08 Support Resolution Copilot – Group 6  
-**Jira:** CRM-33 · **Owner:** QA/Tester (PB-401)  
-**Source:** SongNhat RFP, Section 8 (Independent acceptance) and Annex G (VN-01/VN-02).  
-**Status:** Designed; **Not Run**. All cases are fictional, non-production test fixtures.
-
 ## 1. Testing contract and constraints
 
 - **Exactly 80 fixtures:** 20 VN/terminology, 20 model/serial/applicability, 20 hazard, 20 access/source-rights.
