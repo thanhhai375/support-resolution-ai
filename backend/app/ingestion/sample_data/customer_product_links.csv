@@ -1,0 +1,8 @@
+link_id,account_key,product_code,serial_number,link_status,confidence_score,link_source,confirmed_by,confirmed_at,conflict_note,batch_id,record_version,owner,access_label,permitted_audience
+LNK-001,ACC-001,MOTORS,SN-MTR-10001,approved,1.0,crm_registration,knowledge_steward,2024-01-10T09:00:00+07:00,,BATCH-20240110-001,1,knowledge_steward,INTERNAL,support_agent|technical_approver|knowledge_steward
+LNK-002,ACC-001,DRIVES,,approved,1.0,crm_registration,knowledge_steward,2024-01-10T09:05:00+07:00,,BATCH-20240110-001,1,knowledge_steward,INTERNAL,support_agent|technical_approver|knowledge_steward
+LNK-003,ACC-002,DRIVES,SN-DRV-20045,approved,1.0,crm_registration,knowledge_steward,2024-01-10T09:10:00+07:00,,BATCH-20240110-001,1,knowledge_steward,INTERNAL,support_agent|technical_approver|knowledge_steward
+LNK-004,ACC-003,MOTORS,SN-MTR-10087,approved,0.95,field_service,knowledge_steward,2024-01-11T10:00:00+07:00,,BATCH-20240111-001,1,knowledge_steward,INTERNAL,support_agent|technical_approver|knowledge_steward
+LNK-005,ACC-005,MOTORS,SN-MTR-10001,pending_review,0.72,auto_inference,,,Cùng serial SN-MTR-10001 đã link với ACC-001. Cần xác nhận thủ công.,BATCH-20240115-001,1,knowledge_steward,INTERNAL,knowledge_steward
+LNK-006,ACC-006,DRIVES,SN-DRV-99999,conflicted,0.45,auto_inference,,,Conflict: serial không tồn tại trong registry.,BATCH-20240116-001,1,knowledge_steward,INTERNAL,knowledge_steward
+LNK-007,,MOTORS,SN-MTR-10099,pending_review,0.60,import,,,,BATCH-20240117-001,1,knowledge_steward,INTERNAL,knowledge_steward

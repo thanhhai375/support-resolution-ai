@@ -92,3 +92,11 @@ Chi tiết ticket hỗ trợ phản hồi, dùng gợi ý mẫu, cập nhật tr
 - `src/layouts/AuthLayout.tsx`: bố cục chung cho Login và Register.
 - `src/styles.css`, `src/shell.css`, `src/wireframe.css`: giao diện chung, shell responsive và phong cách theo ảnh thiết kế.
 - `tests/shell.spec.ts`: kiểm thử acceptance trên trình duyệt.
+
+## CRM-31: Knowledge Base và Source Viewer
+
+`/knowledge-base` hỗ trợ tìm theo mã, tên tài liệu và nội dung (không phân biệt dấu/chữ hoa), lọc Motors/Drives, phân trang 12 bản ghi, trạng thái rỗng và xóa bộ lọc. Source Viewer dùng chung với citation trong Ticket Detail; hỗ trợ Escape, focus trong dialog và trả focus về nút mở.
+
+**Dữ liệu hiện tại là fixture minh họa**, không phải 300 đoạn trích đã phê duyệt thực tế. `src/data/knowledge.ts` tạo 300 bản ghi từ 6 chủ đề mẫu (150 Motors, 150 Drives). Chưa có API tri thức, file PDF gốc, dữ liệu phê duyệt hay RFP đầy đủ để xác nhận tuân thủ Section 5. Citation ticket được chọn mẫu theo dòng sản phẩm, chưa phải kết quả truy xuất của AI. Thay fixture và ánh xạ source ID từ backend trước khi sử dụng thực tế.
+
+Kiểm tra luồng mới: `npm run test:demo -- --grep "knowledge search"`.

@@ -2,3 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# WP02 Ingestion — quarantine audit logs (runtime data, not source code)
+# Annex C: logs are retained on the server, not in VCS
+app/ingestion/quarantine/*.jsonl

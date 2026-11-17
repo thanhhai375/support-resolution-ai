@@ -10,6 +10,7 @@ const statusLabels: Record<TicketStatus, string> = {
   RESOLVED: 'Đã giải quyết',
   AI_SOLVED: 'Đã giải quyết',
   ESCALATED: 'Cảnh báo khẩn cấp',
+  CLOSED: 'Đã đóng',
 }
 const priorityLabels: Record<TicketPriority, string> = { LOW: 'Thấp', MEDIUM: 'Trung bình', HIGH: 'Cao', URGENT: 'Khẩn cấp' }
 const PAGE_SIZE = 7
@@ -62,6 +63,7 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
         <option value="PROCESSING">Đang xử lý</option>
         <option value="HAZARD_ESCALATED">Cảnh báo khẩn cấp</option>
         <option value="RESOLVED">Đã giải quyết</option>
+        <option value="CLOSED">Đã đóng</option>
       </select>
       <select aria-label="Lọc mức ưu tiên" value={priority} onChange={event => { setPriority(event.target.value); setPage(1) }}>
         <option value="ALL">Tất cả mức ưu tiên</option>
@@ -75,10 +77,23 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
 
     <div className="table-scroll">
       <table className="crm22-ticket-table">
-        <thead><tr><th>Mã case</th><th>Tiêu đề</th><th>Thiết bị</th><th>Nhãn an toàn</th><th>Trạng thái</th></tr></thead>
+        
+        <thead>
+          <tr>
+            <th>Mã case</th>
+            <th>Tiêu đề</th>
+            <th>Thiết bị</th>
+            <th>Nhãn an toàn</th>
+            <th>Trạng thái</th>
+            <th>Ưu tiên</th>
+            <th>Người phụ trách</th>
+            <th>Thời gian</th>
+          </tr>
+        </thead>
+
         <tbody>
           {loading
-            ? Array.from({ length: 5 }, (_, index) => <tr key={index}>{Array.from({ length: 5 }, (_, cell) => <td key={cell}><span className="skeleton" /></td>)}</tr>)
+            ? Array.from({ length: 8 }, (_, index) => <tr key={index}>{Array.from({ length: 8 }, (_, cell) => <td key={cell}><span className="skeleton" /></td>)}</tr>)
             : filtered.length
               ? filtered.slice(start, start + PAGE_SIZE).map(ticket => <tr key={ticket.id}>
                 <td><button className="ticket-id ticket-id-button" onClick={() => onSelect(ticket)}>{ticket.id}</button></td>
@@ -86,8 +101,23 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
                 <td>{ticket.device || 'Chưa xác định'}</td>
                 <td>{ticket.safetyLabel ? <span className="crm22-safety yes">⚠ Có cảnh báo</span> : <span className="crm22-safety no">Không</span>}</td>
                 <td><span className={`status status-${getStatusClass(ticket.status)}`}>{getStatusLabel(ticket.status)}</span></td>
+                <td>
+                  <span className={`priority priority-${ticket.priority.toLowerCase()}`}>
+                    {priorityLabels[ticket.priority]}
+                  </span>
+                </td>
+
+                <td>
+                  {ticket.assignee || 'Chưa phân công'}
+                </td>
+
+                <td>
+                  {ticket.createdAt
+                    ? new Date(ticket.createdAt).toLocaleDateString('vi-VN')
+                    : 'Chưa có'}
+                </td>
               </tr>)
-              : <tr><td colSpan={5} className="empty-state">Không tìm thấy ticket phù hợp.</td></tr>}
+              : <tr><td colSpan={8} className="empty-state">Không tìm thấy ticket phù hợp.</td></tr>}
         </tbody>
       </table>
     </div>

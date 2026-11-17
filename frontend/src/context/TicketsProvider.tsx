@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { getTickets } from '../services/ticketService'
+import { createTicket as createTicketApi, getTickets } from '../services/ticketService'
+import type { CreateTicketInput } from '../services/ticketService'
 import type { Ticket } from '../types/ticket'
 import { isHazardStatus, isResolvedStatus } from '../types/ticket'
 
@@ -10,7 +11,15 @@ function isTicket(value: unknown): value is Ticket {
   return typeof ticket.id === 'string'
     && typeof ticket.title === 'string'
     && typeof ticket.customerName === 'string'
-    && (['PENDING_REVIEW', 'PROCESSING', 'HAZARD_ESCALATED', 'RESOLVED', 'AI_SOLVED', 'ESCALATED'] as string[]).includes(String(ticket.status))
+    && ([
+  'PENDING_REVIEW',
+  'PROCESSING',
+  'HAZARD_ESCALATED',
+  'RESOLVED',
+  'AI_SOLVED',
+  'ESCALATED',
+  'CLOSED',
+] as string[]).includes(String(ticket.status))
     && (ticket.priority === 'LOW' || ticket.priority === 'MEDIUM' || ticket.priority === 'HIGH' || ticket.priority === 'URGENT')
     && typeof ticket.createdAt === 'string'
     && (ticket.device === undefined || typeof ticket.device === 'string')
@@ -84,12 +93,25 @@ function useTicketState() {
     catch { setNotice('Không thể lưu dữ liệu trên trình duyệt. Bộ nhớ có thể đã đầy.') }
   }, [tickets, ticketsReady])
 
-  function createTicket(input: Omit<Ticket, 'id' | 'createdAt' | 'responseTimeMinutes'>) {
-    const nextNumber = Math.max(1024, ...tickets.map(ticket => Number(ticket.id.replace(/\D/g, '')) || 0)) + 1
-    const created: Ticket = { ...input, id: `TK-${nextNumber}`, createdAt: new Date().toISOString(), responseTimeMinutes: null }
+  async function createTicket(input: CreateTicketInput) {
+  try {
+    setErrorMessage('')
+
+    const created = await createTicketApi(input)
+
     setTickets(current => [created, ...current])
-    setNotice(`Đã tạo ticket ${created.id}.`)
-  }
+    setNotice(`Đã tạo ticket ${created.id} thành công.`)
+  } catch (error) {
+  const message = error instanceof Error
+    ? error.message
+    : 'Không thể tạo ticket.'
+
+  setErrorMessage(message)
+  console.error('Lỗi tạo ticket:', error)
+
+  throw error
+}
+}
 
   function updateTicket(updated: Ticket) {
     setTickets(current => current.map(ticket => ticket.id === updated.id ? updated : ticket))
@@ -101,7 +123,7 @@ function useTicketState() {
     setNotice(`Đã xóa ticket ${id}.`)
   }
 
-  // Các chỉ số bám sát yêu cầu Jira CRM-22.
+
   const metrics = useMemo(() => {
     const total = tickets.length
     const pendingReview = tickets.filter(ticket => ticket.status === 'PENDING_REVIEW').length

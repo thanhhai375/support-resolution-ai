@@ -1,0 +1,3 @@
+# Quarantine audit log directory (Annex C — append-only runtime data)
+# JSONL files here are gitignored — retain on server, not in VCS.
+# Do NOT delete this directory; the ingest_pipeline.py creates logs here at runtime.

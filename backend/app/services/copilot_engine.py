@@ -1,9 +1,11 @@
-"""Copilot Engine Service for Incident Analysis & Evidence Extraction (Task CRM-24)."""
+"""Copilot Engine Service for Incident Analysis & Support Package Pipeline (Tasks CRM-24 & CRM-28)."""
 
+import inspect
 import json
 import logging
 import os
-from typing import Any, List, Optional
+import uuid
+from typing import Any, List, Optional, Union
 
 from app.schemas.copilot import (
     CaseSummary,
@@ -17,228 +19,367 @@ from app.services.safety_checker import check_safety_hazard
 logger = logging.getLogger(__name__)
 
 
+def _build_hazard_emergency_package(ticket_description: str) -> CopilotPackageResponse:
+    """Tạo gói phản hồi ngắt an toàn khẩn cấp (SAFE-01 - SAFE-06, SUP-04) mà không gọi mô hình AI/Retriever."""
+    emergency_draft = (
+        "CẢNH BÁO AN TOÀN KHẨN CẤP: Hệ thống ghi nhận dấu hiệu nguy cơ mất an toàn "
+        "(khói, cháy nổ, điện giật hoặc sự cố nhiệt/cơ) từ mô tả của quý khách. Quý khách vui lòng "
+        "ngắt nguồn điện cấp cho thiết bị ngay lập tức nếu đảm bảo an toàn, giữ khoảng cách an toàn "
+        "và tuyệt đối không tự ý kiểm tra hay khởi động lại máy. Yêu cầu này đã được chuyển khẩn cấp "
+        "tới Kỹ sư Phụ trách An toàn của SongNhat để liên hệ hỗ trợ trực tiếp."
+    )
+    return CopilotPackageResponse(
+        intent=IntentEnum.TECHNICAL_ESCALATION,
+        summary=CaseSummary(
+            reported_symptom=ticket_description.strip(),
+            confirmed_observation=(
+                "Phát hiện dấu hiệu nguy cơ mất an toàn nghiêm trọng "
+                "(cháy, nổ, bốc khói, điện giật, rò điện hoặc quá nhiệt bất thường)."
+            ),
+            outstanding_questions=(
+                "Đã ngắt nguồn điện tổng chưa? Khu vực xung quanh thiết bị và nhân sự "
+                "vận hành hiện đã đảm bảo an toàn chưa?"
+            ),
+        ),
+        missing_facts=[
+            "Tình trạng ngắt nguồn điện khẩn cấp tại hiện trường",
+            "Số điện thoại liên hệ trực tiếp của người phụ trách tại hiện trường",
+            "Mã Serial (S/N) và vị trí lắp đặt thiết bị",
+        ],
+        citations=[],
+        next_step=(
+            "CẢNH BÁO AN TOÀN: Hướng dẫn khách hàng ngắt ngay nguồn điện khẩn cấp, "
+            "cách ly hiện trường và chuyển tuyến khẩn cấp tới Kỹ sư Phụ trách An toàn của SongNhat."
+        ),
+        draft=emergency_draft,
+        draft_response=emergency_draft,
+        draft_reply="",  # TC-25 yêu cầu draft_reply rỗng khi có nguy hiểm
+        is_hazard_escalated=True,
+    )
+
+
+def _classify_intent_from_text(text: str) -> IntentEnum:
+    """Phân loại ý định ticket vào 1 trong 3 danh mục chuẩn SongNhat."""
+    lowered = text.lower()
+
+    doc_keywords = ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet", "document"]
+    if any(keyword in lowered for keyword in doc_keywords):
+        return IntentEnum.DOCUMENT_REQUEST
+
+    progress_keywords = ["tiến độ", "bảo hành", "khi nào xong", "giao hàng", "tình trạng sửa", "progress", "status"]
+    if any(keyword in lowered for keyword in progress_keywords):
+        return IntentEnum.SERVICE_PROGRESS
+
+    return IntentEnum.TECHNICAL_ESCALATION
+
+
+def _detect_missing_facts(text: str, intent: IntentEnum) -> List[str]:
+    """Xác định các thông tin kỹ thuật còn thiếu theo Intent và triệu chứng."""
+    lowered = text.lower()
+    missing: List[str] = []
+
+    if "serial" not in lowered and "s/n" not in lowered:
+        missing.append("Mã Serial (S/N) của thiết bị")
+    if "firmware" not in lowered and "phiên bản" not in lowered:
+        missing.append("Phiên bản Firmware hiện tại")
+
+    if intent == IntentEnum.TECHNICAL_ESCALATION:
+        if "p1120" not in lowered and "thời gian tăng tốc" not in lowered:
+            missing.append("Thông số thời gian tăng tốc (P1120) và công suất tải")
+        if "r0027" not in lowered and "dòng điện" not in lowered:
+            missing.append("Giá trị dòng điện đầu ra tại thời điểm báo lỗi (r0027)")
+    elif intent == IntentEnum.DOCUMENT_REQUEST:
+        if "model" not in lowered and "mã hiệu" not in lowered:
+            missing.append("Mã hiệu đầy đủ và đời máy trên nhãn sản phẩm")
+        missing.append("Định dạng tài liệu yêu cầu (PDF điện tử hoặc bản vẽ CAD)")
+    elif intent == IntentEnum.SERVICE_PROGRESS:
+        if "phiếu" not in lowered and "biên nhận" not in lowered:
+            missing.append("Mã số phiếu tiếp nhận dịch vụ hoặc ngày gửi thiết bị")
+
+    return missing
+
+
+def _build_next_step(intent: IntentEnum) -> str:
+    """Xác định hành động xử lý tiếp theo đề xuất cho kỹ thuật viên."""
+    if intent == IntentEnum.TECHNICAL_ESCALATION:
+        return (
+            "Thu thập thông số kỹ thuật (S/N, Firmware, P1120, dòng r0027), kiểm tra cách điện "
+            "cáp động cơ bằng đồng hồ Megohmmeter trước khi chuyển Kỹ sư chuyên trách chẩn đoán chuyên sâu."
+        )
+    if intent == IntentEnum.DOCUMENT_REQUEST:
+        return (
+            "Gửi tài liệu kỹ thuật trích xuất đính kèm cho khách hàng; yêu cầu khách hàng cung cấp "
+            "mã hiệu/Serial thiết bị nếu cần phiên bản sơ đồ chi tiết theo đời máy."
+        )
+    return (
+        "Tra cứu mã phiếu dịch vụ/Serial trên hệ thống ERP bảo hành và cập nhật tiến độ xử lý "
+        "hiện tại cho khách hàng trong vòng 2 giờ."
+    )
+
+
+def _build_case_summary(
+    ticket_description: str,
+    citations: List[CitationItem],
+    missing_facts: List[str],
+) -> CaseSummary:
+    """Tạo cấu trúc tóm tắt sự cố (CaseSummary)."""
+    confirmed_obs: Optional[str] = None
+    if citations:
+        confirmed_obs = (
+            f"Đã đối chiếu với '{citations[0].document_title}' (trang {citations[0].page_number}): "
+            f"{citations[0].content_snippet}"
+        )
+
+    questions: Optional[str] = None
+    if missing_facts:
+        questions = "Cần khách hàng cung cấp bổ sung: " + ", ".join(missing_facts) + "."
+
+    return CaseSummary(
+        reported_symptom=ticket_description.strip(),
+        confirmed_observation=confirmed_obs,
+        outstanding_questions=questions,
+    )
+
+
+def _compose_neutral_draft(
+    ticket_description: str,
+    intent: IntentEnum,
+    citations: List[CitationItem],
+    missing_facts: List[str],
+) -> str:
+    """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ kỹ thuật và bắt buộc dưới 180 từ."""
+    if intent == IntentEnum.DOCUMENT_REQUEST:
+        draft = (
+            "Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu cung cấp tài liệu. "
+            "Dựa trên hệ thống cơ sở tri thức, chúng tôi đã trích xuất các phần hướng dẫn liên quan đính kèm. "
+            "Để gửi chính xác bộ sơ đồ đấu nối và tài liệu theo đúng đời máy, quý khách vui lòng phản hồi "
+            "thêm Mã Serial (S/N) và mã hiệu đầy đủ trên nhãn thiết bị. Trân trọng."
+        )
+    elif intent == IntentEnum.SERVICE_PROGRESS:
+        draft = (
+            "Chào quý khách, bộ phận Dịch vụ SongNhat đã nhận được yêu cầu tra cứu tiến độ của quý khách. "
+            "Để chúng tôi kiểm tra chính xác trạng thái xử lý trên hệ thống quản lý bảo hành, quý khách vui lòng "
+            "cung cấp Mã phiếu dịch vụ hoặc Mã Serial (S/N) của thiết bị. Nhân viên phụ trách sẽ phản hồi chi tiết "
+            "ngay sau khi đối chiếu thông tin. Trân trọng."
+        )
+    else:
+        citation_ref = (
+            f"Theo {citations[0].document_title} (trang {citations[0].page_number}), "
+            "hiện tượng này thường liên quan đến quá dòng phần cứng tại IGBT, chạm đất "
+            "cáp động cơ hoặc thời gian tăng tốc (P1120) cài đặt quá ngắn so với tải."
+            if citations
+            else "Chúng tôi đã ghi nhận triệu chứng kỹ thuật để chuyển kỹ sư chuyên trách kiểm tra."
+        )
+        missing_str = (
+            ", ".join(missing_facts[:3])
+            if missing_facts
+            else "Mã Serial và Phiên bản Firmware"
+        )
+        draft = (
+            f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
+            f"\"{ticket_description.strip()}\". {citation_ref} "
+            f"Để kỹ sư chẩn đoán chính xác và hướng dẫn xử lý an toàn, quý khách vui lòng "
+            f"cung cấp thêm: {missing_str}. Trong thời gian chờ phản hồi, quý khách vui lòng "
+            f"không liên tục reset nguồn khi chưa kiểm tra cách điện cáp động cơ. Trân trọng."
+        )
+
+    # Đảm bảo chắc chắn giới hạn nghiêm ngặt dưới 180 từ
+    words = draft.split()
+    if len(words) >= 180:
+        draft = " ".join(words[:175]) + "..."
+    return draft
+
+
+async def _save_copilot_package_to_db(
+    db: Any,
+    ticket_id: Union[int, str, uuid.UUID],
+    package: CopilotPackageResponse,
+) -> None:
+    """Lưu hoặc cập nhật kết quả Support Package vào bảng `copilot_packages`."""
+    try:
+        try:
+            from models import CopilotPackage
+        except ImportError:
+            from backend.models import CopilotPackage
+
+        from sqlalchemy import select
+
+        # Chuẩn hóa ticket_id sang UUID hợp lệ
+        if isinstance(ticket_id, int):
+            pkg_ticket_id = uuid.UUID(int=ticket_id)
+        elif isinstance(ticket_id, str):
+            try:
+                pkg_ticket_id = uuid.UUID(ticket_id)
+            except Exception:
+                pkg_ticket_id = uuid.uuid5(uuid.NAMESPACE_DNS, ticket_id)
+        else:
+            pkg_ticket_id = ticket_id
+
+        stmt = select(CopilotPackage).where(CopilotPackage.ticket_id == pkg_ticket_id)
+        exec_res = db.execute(stmt)
+        if inspect.isawaitable(exec_res):
+            exec_res = await exec_res
+
+        existing = exec_res.scalars().first() if hasattr(exec_res, "scalars") else None
+
+        summary_text = (
+            f"Triệu chứng: {package.summary.reported_symptom}\n"
+            f"Quan sát: {package.summary.confirmed_observation or 'N/A'}\n"
+            f"Câu hỏi: {package.summary.outstanding_questions or 'N/A'}"
+        )
+        citations_data = [c.model_dump() for c in package.citations]
+        intent_str = package.intent.value if hasattr(package.intent, "value") else str(package.intent)
+
+        if existing:
+            existing.intent = intent_str
+            existing.case_summary = summary_text
+            existing.missing_facts = package.missing_facts
+            existing.citations = citations_data
+            existing.next_step = package.next_step
+            existing.draft = package.draft
+            existing.draft_response = package.draft
+            existing.approval_status = "Pending"
+        else:
+            new_pkg = CopilotPackage(
+                ticket_id=pkg_ticket_id,
+                intent=intent_str,
+                case_summary=summary_text,
+                missing_facts=package.missing_facts,
+                citations=citations_data,
+                next_step=package.next_step,
+                draft=package.draft,
+                draft_response=package.draft,
+                approval_status="Pending",
+            )
+            db.add(new_pkg)
+
+        commit_res = db.commit()
+        if inspect.isawaitable(commit_res):
+            await commit_res
+    except Exception as exc:
+        logger.warning("Không thể lưu kết quả vào bảng copilot_packages: %s", exc)
+        if hasattr(db, "rollback"):
+            rb = db.rollback()
+            if inspect.isawaitable(rb):
+                await rb
+
+
+async def run_copilot_pipeline(
+    ticket_description: str,
+    ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
+    db: Optional[Any] = None,
+    api_key: Optional[str] = None,
+) -> CopilotPackageResponse:
+    """Hàm điều phối khép kín End-to-End Copilot Pipeline theo chuẩn SongNhat RFP (Task CRM-28).
+
+    Quy trình:
+        - Bước 1: Quét an toàn khẩn cấp bằng SafetyChecker (Regex).
+                  Nếu phát hiện nguy hiểm -> ngắt luồng ngay, không gọi Retriever/LLM,
+                  citations = [], trả về gói cảnh báo an toàn khẩn cấp.
+        - Bước 2: Truy xuất đoạn trích dẫn kỹ thuật (Citations) từ bảng knowledge_passages.
+        - Bước 3: Phân tích Intent và sinh đủ 5 thành phần (summary, missing_facts, citations,
+                  next_step, draft < 180 từ).
+        - Bước 4: Tự động lưu/cập nhật vào bảng copilot_packages nếu có db và ticket_id.
+
+    Args:
+        ticket_description: Nội dung mô tả sự cố hoặc yêu cầu của ticket.
+        ticket_id: Mã định danh ticket (nếu có để lưu DB).
+        db: Phiên kết nối CSDL (AsyncSession hoặc Session).
+        api_key: API Key LLM (tùy chọn).
+
+    Returns:
+        CopilotPackageResponse chứa đầy đủ 5 thành phần + cờ an toàn.
+    """
+    # =========================================================================
+    # BƯỚC 1: QUÉT AN TOÀN KHẨN CẤP (MANDATORY SAFETY CHECKER)
+    # =========================================================================
+    if check_safety_hazard(ticket_description):
+        logger.warning(
+            "Phát hiện dấu hiệu mất an toàn! Kích hoạt ngắt khẩn cấp (Hazard Escalation)."
+        )
+        hazard_pkg = _build_hazard_emergency_package(ticket_description)
+        if db is not None and ticket_id is not None:
+            await _save_copilot_package_to_db(db, ticket_id, hazard_pkg)
+        return hazard_pkg
+
+    # =========================================================================
+    # BƯỚC 2: TRUY XUẤT BẰNG CHỨNG TỪ KNOWLEDGE BASE (RETRIEVER)
+    # =========================================================================
+    citations: List[CitationItem] = await search_knowledge_passages(
+        query=ticket_description,
+        db=db,
+    )
+
+    # =========================================================================
+    # BƯỚC 3: PHÂN TÍCH INTENT & SINH 5 THÀNH PHẦN THEO RFP
+    # =========================================================================
+    intent = _classify_intent_from_text(ticket_description)
+    missing_facts = _detect_missing_facts(ticket_description, intent)
+    next_step = _build_next_step(intent)
+    summary = _build_case_summary(ticket_description, citations, missing_facts)
+    draft = _compose_neutral_draft(
+        ticket_description=ticket_description,
+        intent=intent,
+        citations=citations,
+        missing_facts=missing_facts,
+    )
+
+    package = CopilotPackageResponse(
+        intent=intent,
+        summary=summary,
+        missing_facts=missing_facts,
+        citations=citations,
+        next_step=next_step,
+        draft=draft,
+        draft_response=draft,
+        draft_reply=draft,
+        is_hazard_escalated=False,
+    )
+
+    # =========================================================================
+    # BƯỚC 4: LƯU KẾT QUẢ VÀO BẢNG COPILOT_PACKAGES NẾU CÓ DB & TICKET_ID
+    # =========================================================================
+    if db is not None and ticket_id is not None:
+        await _save_copilot_package_to_db(db, ticket_id, package)
+
+    return package
+
+
 class CopilotEngineService:
-    """Service điều phối quy trình 3 bước phân tích sự cố và trích xuất bằng chứng."""
+    """Service điều phối quy trình phân tích sự cố và trích xuất bằng chứng (CRM-24 & CRM-28)."""
 
     def __init__(self, db: Optional[Any] = None, api_key: Optional[str] = None) -> None:
         """Khởi tạo CopilotEngineService.
 
         Args:
             db: Kết nối cơ sở dữ liệu (tùy chọn).
-            api_key: API Key cho dịch vụ LLM (Gemini/OpenAI) nếu kích hoạt gọi AI thật.
+            api_key: API Key cho dịch vụ LLM nếu kích hoạt gọi AI thật.
         """
         self.db = db
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-    async def analyze_ticket(self, ticket_description: str) -> CopilotPackageResponse:
-        """Thực thi quy trình 3 bước phân tích ticket hỗ trợ kỹ thuật.
-
-        Quy trình:
-            - Bước 1: Kiểm tra an toàn bằng `check_safety_hazard(ticket_description)`.
-              Nếu phát hiện nguy hiểm -> Ngắt luồng ngay lập tức, trả về gói khẩn cấp
-              (`is_hazard_escalated = True`, `intent = TECHNICAL_ESCALATION`),
-              tuyệt đối KHÔNG gọi mô hình AI.
-            - Bước 2: Truy xuất tài liệu kỹ thuật qua `search_knowledge_passages()`.
-            - Bước 3: Phân tích Intent, tóm tắt sự cố, xác định dữ kiện còn thiếu và
-              soạn bản nháp phản hồi tiếng Việt trung tính (< 180 từ).
-
-        Args:
-            ticket_description: Nội dung mô tả sự cố của khách hàng.
-
-        Returns:
-            Đối tượng `CopilotPackageResponse` hoàn chỉnh.
-        """
-        # =====================================================================
-        # BƯỚC 1: QUÉT AN TOÀN KHẨN CẤP (MANDATORY SAFETY ROUTING)
-        # =====================================================================
-        if check_safety_hazard(ticket_description):
-            logger.warning(
-                "Phát hiện dấu hiệu mất an toàn! Kích hoạt ngắt khẩn cấp (Hazard Escalation)."
-            )
-            return self._build_hazard_emergency_package(ticket_description)
-
-        # =====================================================================
-        # BƯỚC 2: TRUY XUẤT BẰNG CHỨNG TỪ KNOWLEDGE BASE
-        # =====================================================================
-        citations: List[CitationItem] = await search_knowledge_passages(
-            query=ticket_description,
+    async def analyze_ticket(
+        self,
+        ticket_description: str,
+        ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
+    ) -> CopilotPackageResponse:
+        """Tương thích ngược hoàn toàn với method analyze_ticket của CRM-24."""
+        return await run_copilot_pipeline(
+            ticket_description=ticket_description,
+            ticket_id=ticket_id,
             db=self.db,
+            api_key=self.api_key,
         )
 
-        # =====================================================================
-        # BƯỚC 3: PHÂN TÍCH INTENT, TÓM TẮT SỰ CỐ & TẠO PHẢN HỒI NHÁP (< 180 TỪ)
-        # =====================================================================
-        return await self._generate_copilot_analysis(
-            ticket_description=ticket_description,
-            citations=citations,
-        )
-
-    def _build_hazard_emergency_package(
+    async def run_copilot_pipeline(
         self,
         ticket_description: str,
+        ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
     ) -> CopilotPackageResponse:
-        """Tạo gói phản hồi ngắt an toàn khẩn cấp mà không gọi mô hình AI."""
-        emergency_draft = (
-            "CẢNH BÁO AN TOÀN KHẨN CẤP: Hệ thống ghi nhận dấu hiệu nguy cơ mất an toàn "
-            "(khói, cháy nổ hoặc sự cố điện) từ mô tả của quý khách. Quý khách vui lòng "
-            "ngắt nguồn điện cấp cho thiết bị ngay lập tức nếu đảm bảo an toàn, giữ khoảng "
-            "cách an toàn và tuyệt đối không tự ý kiểm tra hay khởi động lại máy. Yêu cầu "
-            "này đã được chuyển khẩn cấp tới Kỹ sư Phụ trách An toàn của SongNhat để liên "
-            "hệ hỗ trợ trực tiếp."
-        )
-        return CopilotPackageResponse(
-            intent=IntentEnum.TECHNICAL_ESCALATION,
-            summary=CaseSummary(
-                reported_symptom=ticket_description.strip(),
-                confirmed_observation=(
-                    "Phát hiện từ khóa cảnh báo nguy cơ mất an toàn nghiêm trọng "
-                    "(cháy, nổ, bốc khói hoặc điện giật)."
-                ),
-                outstanding_questions=(
-                    "Đã ngắt nguồn điện tổng chưa? Khu vực xung quanh thiết bị và nhân sự "
-                    "vận hành hiện đã đảm bảo an toàn chưa?"
-                ),
-            ),
-            missing_facts=[
-                "Tình trạng ngắt nguồn điện khẩn cấp tại hiện trường",
-                "Số điện thoại liên hệ trực tiếp của người phụ trách tại hiện trường",
-                "Mã Serial (S/N) và vị trí lắp đặt thiết bị",
-            ],
-            draft_response=emergency_draft,
-            citations=[],
-            is_hazard_escalated=True,
-        )
-
-    async def _generate_copilot_analysis(
-        self,
-        ticket_description: str,
-        citations: List[CitationItem],
-    ) -> CopilotPackageResponse:
-        """Phân tích Intent, tóm tắt và tạo bản nháp phản hồi dựa trên bằng chứng."""
-        intent = self._classify_intent_from_text(ticket_description)
-        missing_facts = self._detect_missing_facts(ticket_description, intent)
-        summary = self._build_case_summary(ticket_description, citations, missing_facts)
-        draft_response = self._compose_neutral_draft(
+        """Thực thi pipeline thông qua instance của CopilotEngineService."""
+        return await run_copilot_pipeline(
             ticket_description=ticket_description,
-            intent=intent,
-            citations=citations,
-            missing_facts=missing_facts,
+            ticket_id=ticket_id,
+            db=self.db,
+            api_key=self.api_key,
         )
-
-        return CopilotPackageResponse(
-            intent=intent,
-            summary=summary,
-            missing_facts=missing_facts,
-            draft_response=draft_response,
-            citations=citations,
-            is_hazard_escalated=False,
-        )
-
-    def _classify_intent_from_text(self, text: str) -> IntentEnum:
-        """Phân loại ý định ticket vào 1 trong 3 danh mục SongNhat."""
-        lowered = text.lower()
-
-        doc_keywords = ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet"]
-        if any(keyword in lowered for keyword in doc_keywords):
-            return IntentEnum.DOCUMENT_REQUEST
-
-        progress_keywords = ["tiến độ", "bảo hành", "khi nào xong", "giao hàng", "tình trạng sửa"]
-        if any(keyword in lowered for keyword in progress_keywords):
-            return IntentEnum.SERVICE_PROGRESS
-
-        return IntentEnum.TECHNICAL_ESCALATION
-
-    def _detect_missing_facts(self, text: str, intent: IntentEnum) -> List[str]:
-        """Xác định các thông tin kỹ thuật còn thiếu trong mô tả của khách hàng."""
-        lowered = text.lower()
-        missing: List[str] = []
-
-        if "serial" not in lowered and "s/n" not in lowered:
-            missing.append("Mã Serial (S/N) của thiết bị")
-        if "firmware" not in lowered and "phiên bản" not in lowered:
-            missing.append("Phiên bản Firmware hiện tại")
-
-        if intent == IntentEnum.TECHNICAL_ESCALATION:
-            if "p1120" not in lowered and "thời gian tăng tốc" not in lowered:
-                missing.append("Thông số thời gian tăng tốc (P1120) và công suất tải")
-            if "r0027" not in lowered and "dòng điện" not in lowered:
-                missing.append("Giá trị dòng điện đầu ra tại thời điểm báo lỗi")
-
-        return missing
-
-    def _build_case_summary(
-        self,
-        ticket_description: str,
-        citations: List[CitationItem],
-        missing_facts: List[str],
-    ) -> CaseSummary:
-        """Tạo cấu trúc tóm tắt sự cố (CaseSummary)."""
-        confirmed_obs: Optional[str] = None
-        if citations:
-            confirmed_obs = (
-                f"Đã đối chiếu với '{citations[0].document_title}' (trang {citations[0].page_number}): "
-                f"{citations[0].content_snippet}"
-            )
-
-        questions: Optional[str] = None
-        if missing_facts:
-            questions = (
-                "Cần khách hàng cung cấp bổ sung: " + ", ".join(missing_facts) + "."
-            )
-
-        return CaseSummary(
-            reported_symptom=ticket_description.strip(),
-            confirmed_observation=confirmed_obs,
-            outstanding_questions=questions,
-        )
-
-    def _compose_neutral_draft(
-        self,
-        ticket_description: str,
-        intent: IntentEnum,
-        citations: List[CitationItem],
-        missing_facts: List[str],
-    ) -> str:
-        """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ và dưới 180 từ."""
-        if intent == IntentEnum.DOCUMENT_REQUEST:
-            draft = (
-                "Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu "
-                "cung cấp tài liệu của quý khách. Dựa trên hệ thống cơ sở tri thức, chúng "
-                "tôi đã trích xuất các phần hướng dẫn liên quan đính kèm. Để gửi chính xác "
-                "bộ sơ đồ đấu nối và tài liệu theo đúng đời máy, quý khách vui lòng phản hồi "
-                "thêm Mã Serial (S/N) và mã hiệu đầy đủ trên nhãn thiết bị. Trân trọng."
-            )
-        elif intent == IntentEnum.SERVICE_PROGRESS:
-            draft = (
-                "Chào quý khách, bộ phận Dịch vụ SongNhat đã nhận được yêu cầu tra cứu "
-                "tiến độ của quý khách. Để chúng tôi kiểm tra chính xác trạng thái xử lý "
-                "trên hệ thống quản lý bảo hành, quý khách vui lòng cung cấp Mã phiếu dịch vụ "
-                "hoặc Mã Serial (S/N) của thiết bị. Nhân viên phụ trách sẽ phản hồi chi tiết "
-                "ngay sau khi đối chiếu thông tin. Trân trọng."
-            )
-        else:
-            citation_ref = (
-                f"Theo {citations[0].document_title} (trang {citations[0].page_number}), "
-                "hiện tượng này thường liên quan đến quá dòng phần cứng tại IGBT, chạm đất "
-                "cáp động cơ hoặc thời gian tăng tốc (P1120) cài đặt quá ngắn so với tải."
-                if citations
-                else "Chúng tôi đã ghi nhận triệu chứng kỹ thuật để chuyển kỹ sư chuyên trách kiểm tra."
-            )
-            missing_str = (
-                ", ".join(missing_facts[:3])
-                if missing_facts
-                else "Mã Serial và Phiên bản Firmware"
-            )
-            draft = (
-                f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
-                f"\"{ticket_description.strip()}\". {citation_ref} "
-                f"Để kỹ sư chẩn đoán chính xác và hướng dẫn xử lý an toàn, quý khách vui lòng "
-                f"cung cấp thêm: {missing_str}. Trong thời gian chờ phản hồi, quý khách vui lòng "
-                f"không liên tục reset nguồn khi chưa kiểm tra cách điện cáp động cơ. Trân trọng."
-            )
-
-        # Đảm bảo chắc chắn giới hạn dưới 180 từ
-        words = draft.split()
-        if len(words) >= 180:
-            draft = " ".join(words[:175]) + "..."
-        return draft
