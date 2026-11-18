@@ -17,6 +17,8 @@ def add_user(
     full_name: str,
     role: str,
     user_id: str | None = None,
+    allowed_accounts: list[str] | None = None,
+    allowed_cases: list[str] | None = None,
 ) -> dict:
     key = email.lower()
     user = {
@@ -25,6 +27,8 @@ def add_user(
         "full_name": full_name,
         "role": role,
         "password_hash": hash_password(password),
+        "allowed_accounts": list(allowed_accounts) if allowed_accounts is not None else None,
+        "allowed_cases": list(allowed_cases) if allowed_cases is not None else None,
     }
     _USERS[key] = user
     return user
@@ -32,6 +36,14 @@ def add_user(
 
 def get_user_by_email(email: str) -> dict | None:
     return _USERS.get(email.lower())
+
+
+def update_user_role(email: str, role: str) -> dict | None:
+    user = _USERS.get(email.lower())
+    if user is None:
+        return None
+    user["role"] = role
+    return user
 
 
 def _seed_admin() -> None:
