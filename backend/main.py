@@ -61,14 +61,11 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Đăng ký router ở cuối file để tránh vòng lặp import
-from routers import tickets, copilot
-app.include_router(tickets.router)
-app.include_router(copilot.router)
-
 @app.get("/")
 def root():
     return {"message": "SongNhat Copilot Backend is running successfully!"}
+
+# Đăng ký router ở cuối file để tránh vòng lặp import
 from routers import tickets, copilot, knowledge
 app.include_router(tickets.router)
 app.include_router(copilot.router)
