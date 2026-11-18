@@ -1,0 +1,26 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE & OS
+.vscode/
+.idea/
+*.DS_Store
+
+# Secrets (never bake into image)
+.env
+
+# Docs / tests (not needed in image)
+tests/
+docs/
+*.md

@@ -1,0 +1,130 @@
+# ==============================================================
+#
+#  SONGNHAT COPILOT — Full-Stack Docker Compose
+#
+#  Services                 Container              Port
+#  ───────────────────────  ─────────────────────  ──────────
+#  1. PostgreSQL DB         songnhat-db            5432
+#  2. DB Schema Init        songnhat-db-init       (one-shot)
+#  3. FastAPI Backend       songnhat-backend       8000
+#  4. React Frontend        songnhat-frontend      80
+#
+#  Usage:
+#    docker compose up -d          # start everything
+#    docker compose down -v        # stop + remove volumes
+#    docker compose logs -f        # stream all logs
+#
+# ==============================================================
+
+name: songnhat-copilot
+
+services:
+
+  # ============================================================
+  # 1. PostgreSQL Database
+  # ============================================================
+  db:
+    image: postgres:16-alpine
+    container_name: songnhat-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-songnhat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-songnhat_dev}
+      POSTGRES_DB:       ${POSTGRES_DB:-songnhat_copilot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ============================================================
+  # 2. Database Schema Initialisation (one-shot)
+  # ============================================================
+  db-init:
+    image: postgres:16-alpine
+    container_name: songnhat-db-init
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-songnhat_dev}
+    volumes:
+      - ./docs/database/schema.sql:/schema.sql:ro
+    command:
+      - psql
+      - -h
+      - db
+      - -U
+      - ${POSTGRES_USER:-songnhat}
+      - -d
+      - ${POSTGRES_DB:-songnhat_copilot}
+      - -v
+      - ON_ERROR_STOP=1
+      - -f
+      - /schema.sql
+    restart: "no"
+
+  # ============================================================
+  # 3. FastAPI Backend
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: songnhat-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Overide defaults from config.py for Docker networking
+      HOST:     0.0.0.0
+      PORT:     8000
+      # Database URL — used if/when SQLAlchemy is wired up
+      DATABASE_URL: postgresql://${POSTGRES_USER:-songnhat}:${POSTGRES_PASSWORD:-songnhat_dev}@db:5432/${POSTGRES_DB:-songnhat_copilot}
+      # Pass through the remaining settings
+      POSTGRES_USER:     ${POSTGRES_USER:-songnhat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-songnhat_dev}
+      POSTGRES_DB:       ${POSTGRES_DB:-songnhat_copilot}
+      JWT_SECRET_KEY:               ${JWT_SECRET_KEY:-dev-only-secret-change-me}
+      JWT_ALGORITHM:                ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES:  ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      SEED_ADMIN_EMAIL:             ${SEED_ADMIN_EMAIL:-admin@example.com}
+      SEED_ADMIN_PASSWORD:          ${SEED_ADMIN_PASSWORD:-Admin@123}
+      CORS_ORIGINS: >-
+        ["http://localhost", "http://localhost:80", "http://127.0.0.1"]
+    ports:
+      - "8000:8000"
+    volumes:
+      # Hot-reload: mount source so code changes reflect without rebuild
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ============================================================
+  # 4. React Frontend (Vite build → Nginx)
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: songnhat-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+
+# ==============================================================
+# Volumes
+# ==============================================================
+volumes:
+  pgdata:
