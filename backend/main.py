@@ -61,10 +61,6 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Đăng ký router ở cuối file để tránh vòng lặp import
-from routers import tickets, copilot
-app.include_router(tickets.router)
-app.include_router(copilot.router)
 
 @app.get("/")
 def root():
