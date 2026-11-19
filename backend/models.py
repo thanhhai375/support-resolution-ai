@@ -1,3 +1,4 @@
+import enum
 import uuid
 from typing import Any
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    Enum as SQLEnum,
     Uuid as UUID,
     func,
 )
@@ -21,6 +23,47 @@ except ImportError:
     except ImportError:
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
+
+
+class UserRole(str, enum.Enum):
+    STAFF = "STAFF"
+    ENGINEER = "ENGINEER"
+    MANAGER = "MANAGER"
+    ADMIN = "ADMIN"
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(150), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    role = Column(
+        SQLEnum(UserRole, name="userrole", native_enum=True, validate_strings=True),
+        nullable=False,
+        default=UserRole.STAFF,
+        server_default=UserRole.STAFF.value,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __init__(self, **kwargs: Any) -> None:
+        if "role" in kwargs and isinstance(kwargs["role"], str):
+            kwargs["role"] = kwargs["role"].upper()
+        super().__init__(**kwargs)
+
+
+class RevokedToken(Base):
+    """Bảng lưu trữ các token đã bị thu hồi (Token Blacklist) phục vụ tính năng Logout / Revoke."""
+    __tablename__ = "revoked_tokens"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token = Column(String(500), unique=True, index=True, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Product(Base):

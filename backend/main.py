@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
@@ -65,7 +66,54 @@ app = FastAPI(
 @app.get("/")
 def root():
     return {"message": "SongNhat Copilot Backend is running successfully!"}
+
+# Import và đăng ký các router
 from routers import tickets, copilot, knowledge
+from app.api.v1 import auth  # Thêm import auth router từ thư mục app/api/v1/auth.py
+
 app.include_router(tickets.router)
-app.include_router(copilot.router)
+# CRM-40: Copilot endpoints are authenticated for all four operational roles.
+# Use the existing auth vocabulary here; the knowledge/ticket routers additionally
+# adapt CRM-40 enum values to that vocabulary for endpoint-specific policies.
+from app.api.deps import get_current_user, require_role as _require_role
+from app.services import auth_service
+
+_copilot_access = _require_role(
+    "support_agent", "technical_approver", "knowledge_steward", "administrator"
+)
+_CRM40_ROLE_TO_LEGACY = {
+    "STAFF": "support_agent",
+    "ENGINEER": "technical_approver",
+    "MANAGER": "knowledge_steward",
+    "ADMIN": "administrator",
+}
+
+def _copilot_role_guard(current_user: dict = Depends(get_current_user)):
+    normalized_user = dict(current_user)
+    normalized_user["role"] = _CRM40_ROLE_TO_LEGACY.get(
+        normalized_user.get("role"), normalized_user.get("role")
+    )
+    return _copilot_access(normalized_user)
+
+app.include_router(copilot.router, dependencies=[Depends(_copilot_role_guard)])
 app.include_router(knowledge.router)
+app.include_router(auth.router, prefix="/api")  # Đăng ký auth router với prefix /api[cite: 2]
+
+# CRM-40: canonical DELETE logout endpoint. The existing auth service performs
+# the same immediate revocation check used by get_current_user on every request.
+
+_bearer = HTTPBearer(auto_error=False)
+
+@app.delete("/api/auth/revoke", status_code=204, tags=["auth"])
+def revoke_current_access_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    current_user: dict = Depends(get_current_user),
+):
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    auth_service.revoke_token(credentials.credentials)
+    return None
