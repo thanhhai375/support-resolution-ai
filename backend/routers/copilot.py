@@ -22,9 +22,13 @@ async def analyze_copilot_request(
 ):
     """Phân tích nội dung ticket độc lập và sinh Support Package chuẩn SongNhat RFP.
 
+    Sử dụng Retriever thực (CRM-43) để truy xuất dữ liệu từ bảng knowledge_passages.
     Hỗ trợ kiểm thử Postman TC-21, TC-22, TC-23, TC-24, TC-25.
     """
     return await run_copilot_pipeline(
         ticket_description=payload.ticket_description,
+        ticket_id=payload.ticket_id,
         db=db,
+        product_id=payload.product_id,
+        limit=payload.limit or 3,
     )

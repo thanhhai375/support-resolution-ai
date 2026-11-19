@@ -269,14 +269,16 @@ async def run_copilot_pipeline(
     ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
     db: Optional[Any] = None,
     api_key: Optional[str] = None,
+    product_id: Optional[Any] = None,
+    limit: int = 3,
 ) -> CopilotPackageResponse:
-    """Hàm điều phối khép kín End-to-End Copilot Pipeline theo chuẩn SongNhat RFP (Task CRM-28).
+    """Hàm điều phối khép kín End-to-End Copilot Pipeline theo chuẩn SongNhat RFP (Tasks CRM-28 & CRM-43).
 
     Quy trình:
         - Bước 1: Quét an toàn khẩn cấp bằng SafetyChecker (Regex).
                   Nếu phát hiện nguy hiểm -> ngắt luồng ngay, không gọi Retriever/LLM,
                   citations = [], trả về gói cảnh báo an toàn khẩn cấp.
-        - Bước 2: Truy xuất đoạn trích dẫn kỹ thuật (Citations) từ bảng knowledge_passages.
+        - Bước 2: Truy xuất đoạn trích dẫn kỹ thuật (Citations) thực tế từ bảng knowledge_passages.
         - Bước 3: Phân tích Intent và sinh đủ 5 thành phần (summary, missing_facts, citations,
                   next_step, draft < 180 từ).
         - Bước 4: Tự động lưu/cập nhật vào bảng copilot_packages nếu có db và ticket_id.
@@ -286,6 +288,8 @@ async def run_copilot_pipeline(
         ticket_id: Mã định danh ticket (nếu có để lưu DB).
         db: Phiên kết nối CSDL (AsyncSession hoặc Session).
         api_key: API Key LLM (tùy chọn).
+        product_id: UUID nhóm sản phẩm liên quan (Motors / Drives).
+        limit: Số lượng trích dẫn tối đa cần lấy.
 
     Returns:
         CopilotPackageResponse chứa đầy đủ 5 thành phần + cờ an toàn.
@@ -302,12 +306,34 @@ async def run_copilot_pipeline(
             await _save_copilot_package_to_db(db, ticket_id, hazard_pkg)
         return hazard_pkg
 
+    # Nếu chưa có product_id mà có ticket_id trong DB, thử lấy product_id từ ticket
+    resolved_product_id = product_id
+    if resolved_product_id is None and db is not None and ticket_id is not None:
+        try:
+            try:
+                from models import Ticket
+            except ImportError:
+                from backend.models import Ticket
+            from sqlalchemy import select
+            parsed_tid = ticket_id if isinstance(ticket_id, uuid.UUID) else uuid.UUID(str(ticket_id))
+            t_stmt = select(Ticket).where(Ticket.id == parsed_tid)
+            t_res = db.execute(t_stmt)
+            if inspect.isawaitable(t_res):
+                t_res = await t_res
+            t_obj = t_res.scalars().first() if hasattr(t_res, "scalars") else None
+            if t_obj and getattr(t_obj, "product_id", None):
+                resolved_product_id = t_obj.product_id
+        except Exception:
+            pass
+
     # =========================================================================
-    # BƯỚC 2: TRUY XUẤT BẰNG CHỨNG TỪ KNOWLEDGE BASE (RETRIEVER)
+    # BƯỚC 2: TRUY XUẤT BẰNG CHỨNG TỪ KNOWLEDGE BASE (RETRIEVER THỰC - CRM-43)
     # =========================================================================
     citations: List[CitationItem] = await search_knowledge_passages(
         query=ticket_description,
         db=db,
+        limit=limit,
+        product_id=resolved_product_id,
     )
 
     # =========================================================================
@@ -362,6 +388,8 @@ class CopilotEngineService:
         self,
         ticket_description: str,
         ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
+        product_id: Optional[Any] = None,
+        limit: int = 3,
     ) -> CopilotPackageResponse:
         """Tương thích ngược hoàn toàn với method analyze_ticket của CRM-24."""
         return await run_copilot_pipeline(
@@ -369,12 +397,16 @@ class CopilotEngineService:
             ticket_id=ticket_id,
             db=self.db,
             api_key=self.api_key,
+            product_id=product_id,
+            limit=limit,
         )
 
     async def run_copilot_pipeline(
         self,
         ticket_description: str,
         ticket_id: Optional[Union[int, str, uuid.UUID]] = None,
+        product_id: Optional[Any] = None,
+        limit: int = 3,
     ) -> CopilotPackageResponse:
         """Thực thi pipeline thông qua instance của CopilotEngineService."""
         return await run_copilot_pipeline(
@@ -382,4 +414,6 @@ class CopilotEngineService:
             ticket_id=ticket_id,
             db=self.db,
             api_key=self.api_key,
+            product_id=product_id,
+            limit=limit,
         )
