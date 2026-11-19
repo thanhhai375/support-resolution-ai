@@ -12,3 +12,5 @@ pytest>=8.0
 sqlalchemy>=2.0
 aiosqlite>=0.19          # SQLite async driver (dev / test fallback)
 asyncpg>=0.29            # PostgreSQL async driver (production)
+
+greenlet
