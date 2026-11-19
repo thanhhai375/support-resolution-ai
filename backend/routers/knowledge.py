@@ -2,10 +2,13 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from app.api.deps import get_current_user as _get_current_user
+from app.api.deps import require_role as _require_role
+from pydantic import BaseModel, Field
 
 try:
     from main import get_db
@@ -13,11 +16,88 @@ except ImportError:
     from backend.main import get_db
 
 try:
-    from models import KnowledgePassage, Product
+    from models import KnowledgePassage, Product, UserRole
 except ImportError:
-    from backend.models import KnowledgePassage, Product
+    from backend.models import KnowledgePassage, Product, UserRole
 
 router = APIRouter(prefix="/api/knowledge", tags=["Knowledge & Citations"])
+
+# CRM-40 role names map onto the legacy authentication repository vocabulary.
+# This keeps the task scoped to the approved router files while auth storage is migrated.
+_ROLE_TO_LEGACY = {
+    UserRole.STAFF: "support_agent",
+    UserRole.ENGINEER: "technical_approver",
+    UserRole.MANAGER: "knowledge_steward",
+    UserRole.ADMIN: "administrator",
+}
+_LEGACY_TO_ROLE = {
+    legacy_role: crm_role.value
+    for crm_role, legacy_role in _ROLE_TO_LEGACY.items()
+}
+
+
+def normalize_role(role: Any) -> str:
+    """Chuẩn hóa role cũ/mới về tên role CRM-40 (STAFF/ENGINEER/MANAGER/ADMIN)."""
+    raw_role = getattr(role, "value", role)
+    if raw_role is None:
+        return ""
+    raw_role = str(raw_role)
+    if raw_role in _LEGACY_TO_ROLE:
+        return _LEGACY_TO_ROLE[raw_role]
+    # Hỗ trợ cả enum UserRole và chuỗi CRM-40.
+    try:
+        return UserRole(raw_role).value
+    except ValueError:
+        return raw_role.upper()
+
+
+def require_role(*roles):
+    """CRM-40 adapter: kiểm tra bằng role legacy, trả current_user với role CRM-40."""
+    crm_roles = tuple(normalize_role(role) for role in roles)
+    legacy_roles = tuple(
+        _ROLE_TO_LEGACY.get(UserRole(role), role)
+        for role in crm_roles
+    )
+    base_checker = _require_role(*legacy_roles)
+
+    def checker(current_user=Depends(_get_current_user)):
+        # Chấp nhận role CRM-40 và role legacy từ hệ thống xác thực hiện tại.
+        normalized_user = dict(current_user)
+        crm_role = normalize_role(normalized_user.get("role"))
+        legacy_role = _ROLE_TO_LEGACY.get(
+            UserRole(crm_role) if crm_role in {r.value for r in UserRole} else None,
+            crm_role,
+        )
+        normalized_user["role"] = legacy_role
+
+        try:
+            authorized_user = base_checker(normalized_user)
+            # Quan trọng: không để role legacy lọt ra ngoài dependency.
+            result_user = dict(authorized_user or normalized_user)
+            result_user["role"] = crm_role
+            return result_user
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions",
+                ) from exc
+            raise
+
+    return checker
+
+
+
+class KnowledgePassageCreate(BaseModel):
+    product_id: UUID
+    document_name: str
+    document_code: Optional[str] = None
+    section_name: Optional[str] = None
+    section_number: Optional[str] = None
+    page_number: int = 1
+    passage_content: str
+    is_approved: bool = False
+    passage_metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 def _map_citation(passage: KnowledgePassage) -> dict[str, Any]:
@@ -169,7 +249,7 @@ async def _ensure_seed_knowledge(db: AsyncSession) -> None:
     await db.commit()
 
 
-# 1. GET /api/knowledge/passages: Truy xuất đoạn trích kỹ thuật & Citations (DAT 04, DAT 05, DAT 08)
+# 1. GET /api/knowledge/passages: Truy xuất đoạn trích kỹ thuật & Citations (STAFF trở lên)
 @router.get("/passages", status_code=200)
 async def get_knowledge_passages(
     product: Optional[str] = Query(
@@ -182,6 +262,7 @@ async def get_knowledge_passages(
     page: int = Query(0, ge=0),
     size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
 ):
     await _ensure_seed_knowledge(db)
 
@@ -243,9 +324,46 @@ async def get_knowledge_passages(
     }
 
 
-# 2. GET /api/knowledge/passages/{passage_id}: Lấy chi tiết 1 đoạn trích kèm Citation
+# 2. POST /api/knowledge/passages: Thêm đoạn trích kiến thức mới (Chỉ MANAGER, ADMIN)
+@router.post("/passages", status_code=status.HTTP_201_CREATED)
+async def create_knowledge_passage(
+    data: KnowledgePassageCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.MANAGER, UserRole.ADMIN)),
+):
+    # Kiểm tra product tồn tại
+    prod_res = await db.execute(select(Product).where(Product.id == data.product_id))
+    prod = prod_res.scalars().first()
+    if not prod:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    new_passage = KnowledgePassage(
+        product_id=data.product_id,
+        document_name=data.document_name,
+        document_code=data.document_code,
+        section_name=data.section_name,
+        section_number=data.section_number,
+        page_number=data.page_number,
+        passage_content=data.passage_content,
+        is_approved=data.is_approved,
+        passage_metadata=data.passage_metadata,
+        approved_by=current_user["email"] if data.is_approved else None,
+        approved_at=datetime.now(timezone.utc) if data.is_approved else None,
+    )
+    db.add(new_passage)
+    await db.commit()
+    await db.refresh(new_passage)
+
+    return _serialize_passage(new_passage, prod)
+
+
+# 3. GET /api/knowledge/passages/{passage_id}: Lấy chi tiết 1 đoạn trích kèm Citation (STAFF trở lên)
 @router.get("/passages/{passage_id}", status_code=200)
-async def get_knowledge_passage_detail(passage_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_knowledge_passage_detail(
+    passage_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
+):
     await _ensure_seed_knowledge(db)
 
     stmt = (

@@ -3,11 +3,14 @@ from typing import Any, Optional
 from uuid import UUID
 import uuid
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+from app.api.deps import get_current_user as _get_current_user
+from app.api.deps import require_role as _require_role
 
 try:
     from main import get_db
@@ -15,14 +18,79 @@ except ImportError:
     from backend.main import get_db
 
 try:
-    from models import Ticket, Product, Category
+    from models import Ticket, Product, Category, UserRole
 except ImportError:
-    from backend.models import Ticket, Product, Category
+    from backend.models import Ticket, Product, Category, UserRole
 
 from app.schemas.copilot import CopilotAnalyzeRequest, SupportPackageOut
 from app.services.copilot_engine import run_copilot_pipeline
 
 router = APIRouter(prefix="/api/tickets", tags=["Tickets Management"])
+
+# CRM-40 role names map onto the legacy authentication repository vocabulary.
+# This keeps the task scoped to the approved router files while auth storage is migrated.
+_ROLE_TO_LEGACY = {
+    UserRole.STAFF: "support_agent",
+    UserRole.ENGINEER: "technical_approver",
+    UserRole.MANAGER: "knowledge_steward",
+    UserRole.ADMIN: "administrator",
+}
+_LEGACY_TO_ROLE = {
+    legacy_role: crm_role.value
+    for crm_role, legacy_role in _ROLE_TO_LEGACY.items()
+}
+
+
+def normalize_role(role: Any) -> str:
+    """Chuẩn hóa role cũ/mới về tên role CRM-40 (STAFF/ENGINEER/MANAGER/ADMIN)."""
+    raw_role = getattr(role, "value", role)
+    if raw_role is None:
+        return ""
+    raw_role = str(raw_role)
+    if raw_role in _LEGACY_TO_ROLE:
+        return _LEGACY_TO_ROLE[raw_role]
+    # Hỗ trợ cả enum UserRole và chuỗi CRM-40.
+    try:
+        return UserRole(raw_role).value
+    except ValueError:
+        return raw_role.upper()
+
+
+def require_role(*roles):
+    """CRM-40 adapter: kiểm tra bằng role legacy, trả current_user với role CRM-40."""
+    crm_roles = tuple(normalize_role(role) for role in roles)
+    legacy_roles = tuple(
+        _ROLE_TO_LEGACY.get(UserRole(role), role)
+        for role in crm_roles
+    )
+    base_checker = _require_role(*legacy_roles)
+
+    def checker(current_user=Depends(_get_current_user)):
+        # Chấp nhận role CRM-40 và role legacy từ hệ thống xác thực hiện tại.
+        normalized_user = dict(current_user)
+        crm_role = normalize_role(normalized_user.get("role"))
+        legacy_role = _ROLE_TO_LEGACY.get(
+            UserRole(crm_role) if crm_role in {r.value for r in UserRole} else None,
+            crm_role,
+        )
+        normalized_user["role"] = legacy_role
+
+        try:
+            authorized_user = base_checker(normalized_user)
+            # Quan trọng: không để role legacy lọt ra ngoài dependency.
+            result_user = dict(authorized_user or normalized_user)
+            result_user["role"] = crm_role
+            return result_user
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions",
+                ) from exc
+            raise
+
+    return checker
+
 
 VALID_STATUSES = {"OPEN", "IN_PROGRESS", "PENDING", "RESOLVED", "CLOSED"}
 VALID_PRIORITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
@@ -134,7 +202,7 @@ async def _resolve_product_and_category(
     category_id: Optional[UUID] = None,
     category_code: Optional[str] = None,
 ) -> tuple[UUID, UUID]:
-    """Lấy product_id & category_id hợp lệ từ bảng products/categories (tự seed theo schema.sql nếu bảng trống)."""
+    """Lấy product_id & category_id hợp lệ từ bảng products/categories."""
     product = None
     if product_id:
         res = await db.execute(select(Product).where(Product.id == product_id))
@@ -176,9 +244,13 @@ async def _resolve_product_and_category(
     return product.id, category.id
 
 
-# 1. POST /api/tickets: Tạo ticket mới -> 201 Created
+# 1. POST /api/tickets: Tạo ticket mới (STAFF trở lên)
 @router.post("", status_code=201)
-async def create_ticket(payload: TicketCreateSchema, db: AsyncSession = Depends(get_db)):
+async def create_ticket(
+    payload: TicketCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
+):
     resolved_subject = (payload.subject or payload.title or "").strip()
     if not resolved_subject:
         raise HTTPException(status_code=422, detail="Field 'subject' or 'title' is required")
@@ -223,7 +295,7 @@ async def create_ticket(payload: TicketCreateSchema, db: AsyncSession = Depends(
         hazard_reason=hazard_reason,
         status=resolved_status,
         priority=resolved_priority,
-        created_by=str(payload.created_by) if payload.created_by is not None else None,
+        created_by=str(payload.created_by) if payload.created_by is not None else current_user["email"],
         assigned_to=str(payload.assigned_to) if payload.assigned_to is not None else None,
     )
 
@@ -246,7 +318,7 @@ async def create_ticket(payload: TicketCreateSchema, db: AsyncSession = Depends(
     }
 
 
-# 2. GET /api/tickets: Lấy danh sách ticket -> 200 OK
+# 2. GET /api/tickets: Lấy danh sách ticket (STAFF trở lên)
 @router.get("", status_code=200)
 async def get_tickets(
     page: int = Query(0, ge=0),
@@ -257,6 +329,7 @@ async def get_tickets(
     priority: Optional[str] = None,
     is_hazard_escalated: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
 ):
     query = select(Ticket)
     if product_id:
@@ -283,9 +356,13 @@ async def get_tickets(
     }
 
 
-# 3. GET /api/tickets/{ticket_id}: Lấy chi tiết ticket -> 200 OK
+# 3. GET /api/tickets/{ticket_id}: Lấy chi tiết ticket (STAFF trở lên)
 @router.get("/{ticket_id}", status_code=200)
-async def get_ticket_detail(ticket_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_ticket_detail(
+    ticket_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
+):
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalars().first()
 
@@ -295,13 +372,14 @@ async def get_ticket_detail(ticket_id: UUID, db: AsyncSession = Depends(get_db))
     return _serialize_ticket(ticket)
 
 
-# 4. PUT & PATCH /api/tickets/{ticket_id}: Cập nhật ticket -> 200 OK
+# 4. PUT & PATCH /api/tickets/{ticket_id}: Cập nhật ticket (STAFF trở lên)
 @router.put("/{ticket_id}", status_code=200)
 @router.patch("/{ticket_id}", status_code=200)
 async def update_ticket(
     ticket_id: UUID,
     payload: TicketUpdateSchema,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
 ):
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalars().first()
@@ -365,12 +443,14 @@ async def update_ticket(
     }
 
 
-# 5. PATCH /api/tickets/{ticket_id}/approve: Duyệt ticket -> 200 OK
+# 5. PATCH /api/tickets/{ticket_id}/approve hoặc /copilot/approve: Chỉ ENGINEER, MANAGER
 @router.patch("/{ticket_id}/approve", status_code=200)
+@router.patch("/{ticket_id}/copilot/approve", status_code=200)
 async def approve_ticket_response(
     ticket_id: UUID,
     payload: Optional[dict[str, Any]] = Body(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.ENGINEER, UserRole.MANAGER)),
 ):
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalars().first()
@@ -383,6 +463,9 @@ async def approve_ticket_response(
         approver = payload.get("approver_id") or payload.get("approverId")
         if approver:
             ticket.assigned_to = str(approver)
+    else:
+        ticket.assigned_to = current_user["email"]
+
     ticket.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -396,9 +479,13 @@ async def approve_ticket_response(
     }
 
 
-# 6. DELETE /api/tickets/{ticket_id}: Xóa ticket -> 204 No Content
+# 6. DELETE /api/tickets/{ticket_id}: Xóa ticket (Chỉ MANAGER, ADMIN)
 @router.delete("/{ticket_id}", status_code=204)
-async def delete_ticket(ticket_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_ticket(
+    ticket_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.MANAGER, UserRole.ADMIN)),
+):
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalars().first()
 
@@ -410,12 +497,13 @@ async def delete_ticket(ticket_id: UUID, db: AsyncSession = Depends(get_db)):
     return Response(status_code=204)
 
 
-# 7. POST /api/tickets/{ticket_id}/copilot/generate: Sinh Support Package cho ticket (Task CRM-28)
+# 7. POST /api/tickets/{ticket_id}/copilot/generate: Sinh Support Package cho ticket (STAFF trở lên)
 @router.post("/{ticket_id}/copilot/generate", response_model=SupportPackageOut)
 async def generate_ticket_copilot_package(
     ticket_id: UUID,
     payload: Optional[CopilotAnalyzeRequest] = None,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
 ):
     """Sinh Support Package hoàn chỉnh cho ticket (SUP-01 - SUP-08)."""
     description = ""
