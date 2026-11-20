@@ -137,7 +137,7 @@ class KnowledgePassage(Base):
     __table_args__ = {"extend_existing": True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True)
     document_name = Column(String(255), nullable=False)
     document_code = Column(String(100), nullable=True)
     section_name = Column(String(255), nullable=True)
@@ -161,11 +161,31 @@ class KnowledgePassage(Base):
         """Alias cho schema / test tương thích ngược."""
         return self.passage_content
 
+    @property
+    def section(self) -> str:
+        """Alias cho section_name / section_number kết hợp."""
+        parts = [p for p in [self.section_number, self.section_name] if p]
+        return " - ".join(parts) if parts else (self.section_name or "")
+
+    @property
+    def version(self) -> str:
+        """Alias lấy version từ metadata."""
+        meta = self.passage_metadata if isinstance(self.passage_metadata, dict) else {}
+        return str(meta.get("version") or meta.get("doc_version") or "v1.0")
+
     def __init__(self, **kwargs: Any) -> None:
         if "document_title" in kwargs and "document_name" not in kwargs:
             kwargs["document_name"] = kwargs.pop("document_title")
         if "content_snippet" in kwargs and "passage_content" not in kwargs:
             kwargs["passage_content"] = kwargs.pop("content_snippet")
+        if "version" in kwargs:
+            v = kwargs.pop("version")
+            meta = kwargs.get("passage_metadata") or kwargs.get("metadata") or {}
+            if isinstance(meta, dict):
+                meta["version"] = v
+            kwargs["passage_metadata"] = meta
+        if "section" in kwargs and "section_name" not in kwargs:
+            kwargs["section_name"] = kwargs.pop("section")
         super().__init__(**kwargs)
 
 
