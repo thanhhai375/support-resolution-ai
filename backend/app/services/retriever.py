@@ -330,14 +330,17 @@ class KnowledgeRetriever:
         db: Optional[Any] = None,
         limit: int = 3,
         product_id: Optional[Any] = None,
+        allow_mock_fallback: bool = False,
     ) -> List[CitationItem]:
-        """Truy vấn bảng `knowledge_passages` thật trong CSDL (Task CRM-43).
+        """Truy vấn bảng `knowledge_passages` thật trong CSDL (Tasks CRM-43 & CRM-49).
 
         Args:
             query: Nội dung mô tả sự cố hoặc từ khóa tìm kiếm.
             db: Phiên làm việc cơ sở dữ liệu (AsyncSession hoặc Session).
             limit: Số lượng trích dẫn tối đa cần lấy (mặc định 3).
             product_id: UUID nhóm sản phẩm (Motors / Drives) để lọc nếu có.
+            allow_mock_fallback: Cờ cho phép fallback về mock data khi bảng rỗng/lỗi
+                                (mặc định False khi db!=None theo CRM-49; chỉ True cho unit test cũ).
 
         Returns:
             Danh sách CitationItem chứa đầy đủ căn cứ kỹ thuật từ bảng đã phê duyệt.
@@ -429,16 +432,34 @@ class KnowledgeRetriever:
                         or getattr(p, "section_name", None)
                         or ""
                     )
+                    meta = (
+                        p.passage_metadata
+                        if isinstance(getattr(p, "passage_metadata", None), dict)
+                        else {}
+                    )
                     version = (
                         getattr(p, "version", None)
-                        or (
-                            p.passage_metadata.get("version")
-                            if isinstance(getattr(p, "passage_metadata", None), dict)
-                            else "v1.0"
-                        )
+                        or meta.get("version")
+                        or meta.get("revision")
+                        or "v1.0"
                     )
-                    doc_code = getattr(p, "document_code", None)
+                    doc_code = getattr(p, "document_code", None) or meta.get("document_code")
                     passage_id = str(p.id) if getattr(p, "id", None) else None
+                    status_val = (
+                        getattr(p, "status", None)
+                        or meta.get("effective_status")
+                        or meta.get("status")
+                        or ("current" if getattr(p, "is_approved", False) else "draft")
+                    )
+                    product_model_val = (
+                        getattr(p, "product_model", None)
+                        or meta.get("product_model")
+                        or meta.get("model")
+                    )
+                    serial_range_val = (
+                        getattr(p, "serial_range", None)
+                        or meta.get("serial_range")
+                    )
 
                     citations.append(
                         CitationItem(
@@ -449,16 +470,25 @@ class KnowledgeRetriever:
                             version=str(version) if version else None,
                             passage_id=passage_id,
                             document_code=str(doc_code) if doc_code else None,
+                            status=str(status_val) if status_val else None,
+                            product_model=str(product_model_val) if product_model_val else None,
+                            serial_range=str(serial_range_val) if serial_range_val else None,
                         )
                     )
                 logger.info("Retriever thực: Tìm thấy %d trích dẫn từ bảng knowledge_passages.", len(citations))
                 return citations
 
-            logger.info("Không tìm thấy đoạn trích phù hợp trong CSDL, chuyển sang fallback.")
+            logger.info("Không tìm thấy đoạn trích phù hợp trong CSDL.")
         except Exception as exc:
-            logger.warning("Lỗi trong quá trình truy xuất bảng knowledge_passages: %s. Chuyển sang fallback.", exc)
+            logger.warning("Lỗi trong quá trình truy xuất bảng knowledge_passages: %s.", exc)
 
-        return get_mock_knowledge_passages(query)[:limit]
+        # CRM-49: Khi db is not None, TUYỆT ĐỐI KHÔNG fallback sang mock data
+        # trừ khi allow_mock_fallback=True (chỉ dùng cho unit test cũ).
+        if allow_mock_fallback:
+            logger.info("Fallback sang mock data vì allow_mock_fallback=True.")
+            return get_mock_knowledge_passages(query)[:limit]
+
+        return []
 
 
 async def search_knowledge_passages(
@@ -466,6 +496,7 @@ async def search_knowledge_passages(
     db: Optional[Any] = None,
     limit: int = 3,
     product_id: Optional[Any] = None,
+    allow_mock_fallback: bool = False,
 ) -> List[CitationItem]:
     """Hàm tiện ích toàn cục thực hiện tìm kiếm trích dẫn kỹ thuật từ bảng `knowledge_passages`."""
     retriever = KnowledgeRetriever()
@@ -474,4 +505,5 @@ async def search_knowledge_passages(
         db=db,
         limit=limit,
         product_id=product_id,
+        allow_mock_fallback=allow_mock_fallback,
     )

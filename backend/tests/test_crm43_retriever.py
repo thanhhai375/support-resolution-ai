@@ -379,7 +379,7 @@ def test_retriever_fallback_when_db_is_none():
 
 
 def test_retriever_fallback_when_db_empty():
-    """Khi DB tồn tại nhưng knowledge_passages rỗng, fallback về mock."""
+    """Khi DB tồn tại nhưng knowledge_passages rỗng và bật allow_mock_fallback=True, fallback về mock."""
     empty_engine = create_engine(
         "sqlite:///:memory:",
         echo=False,
@@ -395,9 +395,10 @@ def test_retriever_fallback_when_db_empty():
             query="Biến tần lỗi F0022",
             db=empty_session,
             limit=3,
+            allow_mock_fallback=True,
         ))
-        # Khi DB rỗng, phải trả về mock (không rỗng, không lỗi)
-        assert len(citations) >= 1, "Phải fallback về mock khi bảng rỗng"
+        # Khi allow_mock_fallback=True, phải trả về mock (không rỗng, không lỗi)
+        assert len(citations) >= 1, "Phải fallback về mock khi allow_mock_fallback=True"
         # Mock data phải có document_title hợp lệ
         assert all(c.document_title for c in citations)
     finally:
@@ -449,6 +450,11 @@ def test_safety_hazard_overrides_retriever_even_with_db(shared_db):
 def test_api_analyze_endpoint_uses_real_retriever(shared_db):
     """Endpoint POST /api/copilot/analyze tích hợp Dependency DB và trả về trích dẫn thực."""
     app.dependency_overrides[get_db] = lambda: shared_db
+    try:
+        from main import _copilot_role_guard
+        app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "username": "test"}
+    except Exception:
+        pass
     client = TestClient(app)
 
     res = client.post(

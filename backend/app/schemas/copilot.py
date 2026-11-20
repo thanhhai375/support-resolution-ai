@@ -52,6 +52,21 @@ class CitationItem(BaseModel):
         description="Mã hiệu tài liệu kỹ thuật",
         examples=["3GZF500730-87"],
     )
+    status: Optional[str] = Field(
+        default=None,
+        description="Trạng thái hiệu lực nguồn (current, draft, superseded, withdrawn)",
+        examples=["current"],
+    )
+    product_model: Optional[str] = Field(
+        default=None,
+        description="Model sản phẩm áp dụng",
+        examples=["SD700"],
+    )
+    serial_range: Optional[str] = Field(
+        default=None,
+        description="Dải serial áp dụng",
+        examples=["SN1000-SN5000"],
+    )
 
 
 class CaseSummary(BaseModel):
