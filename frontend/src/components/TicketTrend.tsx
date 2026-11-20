@@ -35,10 +35,19 @@ export default function TicketTrend({
   })
 
   const max = Math.max(1, ...days.map(day => day.count))
+  const totalLast8Days = days.reduce(
+  (total, day) => total + day.count,
+  0
+)
 
   return (
     <section className="panel trend-panel">
-      <h2>{title}</h2>
+      <div className="trend-heading">
+  <h2>{title}</h2>
+  <span className="trend-total">
+    {totalLast8Days} ticket / 8 ngày
+  </span>
+</div>
       <p className="legend"><i /> Ticket tiếp nhận</p>
 
       <div
@@ -50,13 +59,17 @@ export default function TicketTrend({
       >
         {days.map(day => (
           <div className="chart-column" key={day.label}>
+            <b className="chart-count" aria-hidden="true">
+              {day.count}
+            </b>
             <span
               title={`${day.label}: ${day.count} ticket`}
               style={{
-                height: `${day.count / max * 85}%`,
+                height: `${day.count / max * 60}%`,
                 minHeight: day.count ? 4 : 0,
               }}
             />
+
             <small>{day.label}</small>
           </div>
         ))}

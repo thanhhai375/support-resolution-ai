@@ -10,6 +10,36 @@ export interface DashboardMetrics {
 
 export default function Dashboard({ metrics, loading }: { metrics: DashboardMetrics; loading: boolean }) {
   const value = (number: number) => loading ? '—' : number.toLocaleString('vi-VN')
+  const getPercent = (count: number) =>
+    metrics.total > 0
+      ? Math.round((count / metrics.total) * 100)
+      : 0
+
+  const statusItems = [
+    {
+      label: 'Chờ duyệt',
+      count: metrics.pendingReview,
+      tone: 'blue',
+    },
+    {
+      label: 'Cảnh báo khẩn cấp',
+      count: metrics.hazardEscalated,
+      tone: 'red',
+    },
+    {
+      label: 'Đã giải quyết',
+      count: metrics.resolved,
+      tone: 'green',
+    },
+  ]
+
+  const otherCount = Math.max(
+    0,
+    metrics.total -
+      metrics.pendingReview -
+      metrics.hazardEscalated -
+      metrics.resolved
+  )
   return <>
 <div className="page-title-row">
   <div>
@@ -41,9 +71,56 @@ export default function Dashboard({ metrics, loading }: { metrics: DashboardMetr
       <TicketTrend title="Xu hướng ticket tiếp nhận" />
       <section className="panel status-panel">
         <h2>Chỉ số xử lý ticket</h2>
-        <div className="status-summary"><span className="dot blue-dot" /><span>Chờ duyệt</span><b>{value(metrics.pendingReview)}</b></div>
-        <div className="status-summary"><span className="dot red-dot" /><span>Cảnh báo khẩn cấp</span><b>{value(metrics.hazardEscalated)}</b></div>
-        <div className="status-summary"><span className="dot green-dot" /><span>Đã giải quyết</span><b>{value(metrics.resolved)}</b></div>
+
+        <p className="status-panel-subtitle">
+          Tỷ lệ theo tổng số ticket
+        </p>
+
+        <div className="status-progress-list">
+          {statusItems.map(item => {
+            const percent = getPercent(item.count)
+
+            return (
+              <div
+                className={`status-progress-card status-progress-card--${item.tone}`}
+                key={item.label}
+              >
+                <div className="status-progress-top">
+                  <span className="status-progress-name">
+                    <span
+                      className="status-progress-dot"
+                      aria-hidden="true"
+                    />
+                    {item.label}
+                  </span>
+
+                  <div className="status-progress-metrics">
+                    <b>{value(item.count)}</b>
+                    <span>
+                      {loading ? '—' : `${percent}%`}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  className="status-progress-track"
+                  aria-hidden="true"
+                >
+                  <div
+                    className="status-progress-fill"
+                    style={{
+                      width: `${loading ? 0 : percent}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <p className="status-progress-note">
+          Trạng thái khác: {value(otherCount)} ticket
+        </p>
       </section>
     </div>
     <section className="insight-panel">

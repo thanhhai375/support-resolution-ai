@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Ticket, TicketPriority, TicketStatus } from '../types/ticket'
 import { isHazardStatus, isResolvedStatus } from '../types/ticket'
+import { Search, RotateCcw } from 'lucide-react'
 
 const statusLabels: Record<TicketStatus, string> = {
   PENDING_REVIEW: 'Chờ duyệt',
@@ -45,10 +46,27 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
   const currentPage = Math.min(page, pageCount)
   const start = (currentPage - 1) * PAGE_SIZE
   const devices = [...new Set(tickets.map(ticket => ticket.device).filter(Boolean))]
+  const hasActiveFilters =
+    keyword.trim() !== '' ||
+    status !== 'ALL' ||
+    priority !== 'ALL' ||
+    device !== 'ALL'
 
+  function clearFilters() {
+    setStatus('ALL')
+    setPriority('ALL')
+    setDevice('ALL')
+    setPage(1)
+
+    setParams(current => {
+      const next = new URLSearchParams(current)
+      next.delete('search')
+      return next
+    }, { replace: true })
+  }
   return <section className="ticket-feed" aria-label="Danh sách ticket">
     <div className="table-toolbar">
-      <label className="search-box"><span aria-hidden="true">⌕</span><input aria-label="Tìm kiếm ticket" placeholder="Tìm theo mã case hoặc tiêu đề..." value={keyword} onChange={event => {
+      <label className="search-box"><Search size={19} strokeWidth={2.2} aria-hidden="true" /><input aria-label="Tìm kiếm ticket" placeholder="Tìm theo mã case hoặc tiêu đề..." value={keyword} onChange={event => {
         setPage(1)
         setParams(current => {
           const next = new URLSearchParams(current)
@@ -73,6 +91,16 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
         <option value="ALL">Tất cả thiết bị</option>
         {devices.map(item => <option key={item} value={item}>{item}</option>)}
       </select>
+        {hasActiveFilters && (
+          <button
+            type="button"
+            className="ticket-clear-filters"
+            onClick={clearFilters}
+          >
+            <RotateCcw size={16} aria-hidden="true" />
+            Xóa bộ lọc
+          </button>
+        )}
     </div>
 
     <div className="table-scroll">
@@ -124,7 +152,7 @@ export default function TicketLiveFeedTable({ tickets, loading, onSelect }: { ti
 
     <div className="table-footer">
       <span>Hiển thị {filtered.length ? start + 1 : 0}–{Math.min(start + PAGE_SIZE, filtered.length)} trên {filtered.length} ticket</span>
-      <div className="pagination"><button aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button><span>{currentPage} / {pageCount}</span><button aria-label="Trang sau" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>›</button></div>
+      <div className="pagination"><button aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button><span>Trang {currentPage} / {pageCount}</span><button aria-label="Trang sau" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>›</button></div>
     </div>
   </section>
 }

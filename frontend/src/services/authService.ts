@@ -1,3 +1,4 @@
+import { normalizeRole, type UserRole } from '../auth/token'
 import {
   createDemoToken,
   DEMO_AUTH_ENABLED,
@@ -90,5 +91,100 @@ export async function login(
 
   return {
     access_token: payload.access_token,
+  }
+}
+
+export interface CurrentUser {
+  id: string
+  email: string
+  role: UserRole
+  full_name: string
+}
+
+export async function getCurrentUser(
+  token: string
+): Promise<CurrentUser> {
+  const baseUrl = (
+    import.meta.env.VITE_API_BASE_URL ?? ''
+  ).replace(/\/$/, '')
+
+  const response = await fetch(
+    `${baseUrl}/api/auth/me`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    }
+  )
+
+  if (response.status === 401) {
+    throw new Error(
+      'Phiên đăng nhập không hợp lệ hoặc đã hết hạn.'
+    )
+  }
+
+  if (response.status === 403) {
+    throw new Error(
+      'Bạn không có quyền truy cập hệ thống.'
+    )
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      'Không thể tải thông tin người dùng.'
+    )
+  }
+
+  const payload = await response.json()
+
+  const role = normalizeRole(payload?.role)
+
+  if (
+    !role ||
+    typeof payload.id !== 'string' ||
+    typeof payload.email !== 'string' ||
+    typeof payload.full_name !== 'string'
+  ) {
+    throw new Error(
+      'Thông tin tài khoản hoặc vai trò không hợp lệ.'
+    )
+  }
+
+  return {
+    id: payload.id,
+    email: payload.email,
+    role,
+    full_name: payload.full_name,
+  }
+}
+
+export async function revokeAccessToken(
+  token: string
+): Promise<void> {
+  const baseUrl = (
+    import.meta.env.VITE_API_BASE_URL ?? ''
+  ).replace(/\/$/, '')
+
+  const response = await fetch(
+    `${baseUrl}/api/auth/revoke`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    }
+  )
+
+  if (response.status === 401) {
+    return
+  }
+
+  if (response.status !== 204) {
+    throw new Error(
+      'Không thể thu hồi phiên đăng nhập.'
+    )
   }
 }

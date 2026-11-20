@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { Ticket } from '../types/ticket'
 import './ReviewApprovalPanel.css'
+import { useAuth } from '../auth/AuthProvider'
 
 type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
 /** CRM-30: FE-only review UI. No approval/rejection API is invoked. */
 export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
+  const { role } = useAuth()
+
+  const canReview =
+    role === 'ENGINEER' || role === 'MANAGER'
   const [draft, setDraft] = useState('')
   const [status, setStatus] = useState<ReviewStatus>('pending')
   const [rejectReason, setRejectReason] = useState('')
@@ -22,12 +27,14 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
   }, [ticket.id, ticket.title, ticket.customerName])
 
   function handleEdit(value: string) {
+    if (!canReview) return
     setDraft(value)
     setStatus('pending')
     setMessage('')
   }
 
   function approveAndExport() {
+    if (!canReview) return
     const customerText = draft.trim()
     if (!customerText) {
       setMessage('Vui lòng nhập nội dung phản hồi khách hàng trước khi duyệt.')
@@ -50,6 +57,7 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
   }
 
   function reject() {
+    if (!canReview) return
     if (!rejectReason.trim()) {
       setMessage('Bắt buộc nhập lý do từ chối.')
       return
@@ -77,13 +85,14 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
         className="crm30-editor"
         spellCheck={false}
         value={draft}
+        readOnly={!canReview}
         onChange={event => handleEdit(event.target.value)}
         rows={9}
         placeholder="Nhập nội dung phản hồi dành riêng cho khách hàng..."
       />
       <p className="crm30-helper">Chỉ nội dung trong ô này được xuất ra file .txt. Đây là bản nháp minh họa, chưa phải kết quả từ hệ thống AI hoặc máy chủ.</p>
 
-      {showReject && (
+      {canReview && showReject && (
         <div className="crm30-reject-box">
           <label className="crm30-label" htmlFor="crm30-reject-reason">Lý do từ chối <span aria-hidden="true">*</span></label>
           <textarea
@@ -101,13 +110,19 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
         </div>
       )}
 
-      {!showReject && (
+      {canReview && !showReject && (
         <div className="crm30-actions">
           <button type="button" className="crm30-neutral" onClick={() => { setShowReject(true); setMessage('') }}>Từ chối</button>
           <button type="button" className="crm30-approve" onClick={approveAndExport} disabled={!draft.trim()}>Phê duyệt &amp; xuất văn bản</button>
         </div>
       )}
 
+      {!canReview && (
+  <p className="crm30-helper" role="note">
+    Bạn chỉ có quyền xem bản nháp.
+    Chức năng kiểm duyệt dành cho Kỹ sư và Quản lý.
+  </p>
+)}
       {status === 'rejected' && <p className="crm30-reason"><strong>Lý do từ chối:</strong> {rejectReason}</p>}
       {message && <p className="crm30-message" role="status">{message}</p>}
       <p className="crm30-disclaimer">Bản minh họa giao diện: chưa lưu phê duyệt hoặc từ chối lên máy chủ, chưa gửi phản hồi cho khách hàng. Trạng thái sẽ được đặt lại khi tải lại trang.</p>
