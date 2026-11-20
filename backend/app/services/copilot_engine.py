@@ -1,9 +1,11 @@
-"""Copilot Engine Service for Incident Analysis & Support Package Pipeline (Tasks CRM-24 & CRM-28)."""
+"""Copilot Engine Service for Incident Analysis & Support Package Pipeline (Tasks CRM-24, CRM-28, CRM-50 & CRM-52)."""
 
 import inspect
 import json
 import logging
 import os
+import re
+import unicodedata
 import uuid
 from typing import Any, List, Optional, Union
 
@@ -58,16 +60,48 @@ def _build_hazard_emergency_package(ticket_description: str) -> CopilotPackageRe
     )
 
 
-def _classify_intent_from_text(text: str) -> IntentEnum:
-    """Phân loại ý định ticket vào 1 trong 3 danh mục chuẩn SongNhat."""
-    lowered = text.lower()
+def _remove_vietnamese_accents(text: str) -> str:
+    """Chuẩn hóa chuỗi tiếng Việt: bỏ toàn bộ dấu (accent marks) và chuyển đ/Đ -> d/D.
 
-    doc_keywords = ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet", "document"]
-    if any(keyword in lowered for keyword in doc_keywords):
+    CRM-52 / VN-01: Cho phép so khớp từ khóa intent với input không dấu
+    (ví dụ: "tai lieu" -> match "tài liệu", "huong dan" -> match "hướng dẫn").
+    """
+    # Chuyển đ -> d trước khi xử lý Unicode decomposition
+    text = text.replace("đ", "d").replace("Đ", "D")
+    # Tách dấu (accent) ra khỏi ký tự gốc bằng NFD decomposition
+    nfkd = unicodedata.normalize("NFD", text)
+    # Loại bỏ combining marks (dấu thanh, dấu mũ, dấu móc, v.v.)
+    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+
+
+def _classify_intent_from_text(text: str) -> IntentEnum:
+    """Phân loại ý định ticket vào 1 trong 3 danh mục chuẩn SongNhat.
+
+    CRM-52 / VN-01: Chuẩn hóa chuỗi đầu vào (lowercase + bỏ dấu tiếng Việt)
+    trước khi so khớp từ khóa, để các cụm không dấu như "tai lieu", "huong dan",
+    "so tay", "catalog", "cho xin" được phân loại đúng thành DOCUMENT_REQUEST.
+    """
+    lowered = text.lower()
+    # Tạo thêm bản bỏ dấu để so khớp với input không dấu
+    normalized = _remove_vietnamese_accents(lowered)
+
+    doc_keywords_accented = ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog",
+                             "datasheet", "document", "sổ tay", "cho xin"]
+    doc_keywords_unaccented = ["tai lieu", "manual", "so do", "huong dan", "catalog",
+                               "datasheet", "document", "so tay", "cho xin"]
+
+    # Kiểm tra cả bản có dấu (original) và bản không dấu (normalized)
+    if (any(keyword in lowered for keyword in doc_keywords_accented) or
+            any(keyword in normalized for keyword in doc_keywords_unaccented)):
         return IntentEnum.DOCUMENT_REQUEST
 
-    progress_keywords = ["tiến độ", "bảo hành", "khi nào xong", "giao hàng", "tình trạng sửa", "progress", "status"]
-    if any(keyword in lowered for keyword in progress_keywords):
+    progress_keywords_accented = ["tiến độ", "bảo hành", "khi nào xong", "giao hàng",
+                                  "tình trạng sửa", "progress", "status"]
+    progress_keywords_unaccented = ["tien do", "bao hanh", "khi nao xong", "giao hang",
+                                    "tinh trang sua", "progress", "status"]
+
+    if (any(keyword in lowered for keyword in progress_keywords_accented) or
+            any(keyword in normalized for keyword in progress_keywords_unaccented)):
         return IntentEnum.SERVICE_PROGRESS
 
     return IntentEnum.TECHNICAL_ESCALATION

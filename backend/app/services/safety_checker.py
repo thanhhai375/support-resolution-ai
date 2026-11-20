@@ -1,7 +1,7 @@
-"""Mandatory Safety Checker service using deterministic Regex (Tasks CRM-24, CRM-28 & CRM-37)."""
+"""Mandatory Safety Checker service using deterministic Regex (Tasks CRM-24, CRM-28, CRM-37 & CRM-52)."""
 
 import re
-from typing import Pattern
+from typing import List, Pattern
 
 # ---------------------------------------------------------------------------
 # Danh sách từ khóa và cụm từ chỉ dấu hiệu nguy hiểm (Hazard Terms)
@@ -110,6 +110,78 @@ NEGATION_HAZARD_PATTERN: Pattern[str] = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+# ---------------------------------------------------------------------------
+# CRM-52 / VN-16: Nhận diện ngữ cảnh "hỏi tài liệu / phòng tránh / hướng dẫn
+# an toàn" hoặc "không có sự cố thực tế" để tránh báo nhầm nguy hiểm khi
+# người dùng chỉ tìm kiếm thông tin phòng ngừa, không phải sự cố thật.
+# ---------------------------------------------------------------------------
+DOCUMENTATION_SAFETY_CONTEXT_PHRASES: List[str] = [
+    # Tiếng Việt có dấu
+    "hỏi tài liệu",
+    "tìm tài liệu",
+    "xin tài liệu",
+    "cần tài liệu",
+    "yêu cầu tài liệu",
+    "tài liệu phòng tránh",
+    "tài liệu phòng ngừa",
+    "tài liệu an toàn",
+    "tài liệu hướng dẫn",
+    "hướng dẫn phòng tránh",
+    "hướng dẫn phòng ngừa",
+    "hướng dẫn an toàn",
+    "phòng tránh",
+    "phòng ngừa",
+    "biện pháp phòng",
+    "quy trình an toàn",
+    "không có sự cố thực tế",
+    "không có sự cố thật",
+    "không có sự cố nào",
+    "không xảy ra sự cố",
+    "chưa xảy ra sự cố",
+    "chưa có sự cố",
+    # Tiếng Việt không dấu
+    "hoi tai lieu",
+    "tim tai lieu",
+    "xin tai lieu",
+    "can tai lieu",
+    "yeu cau tai lieu",
+    "tai lieu phong tranh",
+    "tai lieu phong ngua",
+    "tai lieu an toan",
+    "tai lieu huong dan",
+    "huong dan phong tranh",
+    "huong dan phong ngua",
+    "huong dan an toan",
+    "phong tranh",
+    "phong ngua",
+    "bien phap phong",
+    "quy trinh an toan",
+    "khong co su co thuc te",
+    "khong co su co that",
+    "khong co su co nao",
+    "khong xay ra su co",
+    "chua xay ra su co",
+    "chua co su co",
+    # English
+    "prevention guide",
+    "safety guideline",
+    "safety manual",
+    "prevention document",
+    "no actual incident",
+    "no real incident",
+]
+
+
+def _is_documentation_safety_context(text: str) -> bool:
+    """Kiểm tra xem câu có ngữ cảnh hỏi tài liệu/phòng tránh/không có sự cố thật không.
+
+    CRM-52 / VN-16: Nếu câu chứa từ khóa nguy hiểm nhưng ngữ cảnh cho thấy
+    người dùng chỉ hỏi tài liệu hướng dẫn an toàn hoặc nêu rõ không có sự cố
+    thực tế, thì KHÔNG nên kích hoạt ngắt khẩn cấp.
+    """
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in DOCUMENTATION_SAFETY_CONTEXT_PHRASES)
+
 
 def check_safety_hazard(text: str) -> bool:
     """Kiểm tra văn bản có chứa dấu hiệu nguy hiểm (cháy, nổ, khói, điện giật, thương tích, v.v.) hay không.
@@ -127,6 +199,11 @@ def check_safety_hazard(text: str) -> bool:
         return False
 
     normalized_text = " ".join(text.strip().split())
+
+    # CRM-52 / VN-16: Nếu ngữ cảnh là hỏi tài liệu phòng tránh hoặc không có
+    # sự cố thực tế -> an toàn, không kích hoạt ngắt khẩn cấp.
+    if _is_documentation_safety_context(normalized_text):
+        return False
 
     # Loại bỏ các biểu thức phủ định an toàn (VD: "không thấy khói hoặc cháy")
     cleaned_text = NEGATION_HAZARD_PATTERN.sub("", normalized_text)
