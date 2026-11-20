@@ -219,3 +219,188 @@ class TestCRM49DisableMockFallback:
         assert c.version
         assert c.status is not None
         assert c.passage_id is not None
+
+
+# =============================================================================
+# PHẦN 2: UNIT TESTS CRM-51 (MODEL / SERIAL / REVISION / STATUS & ABSTENTION)
+# =============================================================================
+
+class TestCRM51ModelApplicability:
+    """Kiểm tra nhận diện và ràng buộc Model (MODEL-01, MODEL-02, MODEL-03, MODEL-05, MODEL-06, MODEL-12)."""
+
+    def test_model_01_missing_model(self, memory_db):
+        """MODEL-01: 'Xin manual của động cơ, chưa biết model' -> không tự chọn default, trả về []."""
+        q = "Xin manual của động cơ, chưa biết model"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        assert citations == [], f"Kỳ vọng [] khi thiếu model nhưng nhận được: {citations}"
+
+        # Kiểm tra missing facts yêu cầu model
+        facts = _detect_missing_facts(q, IntentEnum.DOCUMENT_REQUEST)
+        assert any("model" in f.lower() or "mã hiệu" in f.lower() for f in facts)
+
+    def test_model_03_conflicting_models(self, memory_db):
+        """MODEL-03: 'Mô tả đầu ghi MODEL_A, cuối ghi MODEL_B' -> xung đột model, dừng truy xuất."""
+        q = "Mô tả đầu ghi MODEL_A, cuối ghi MODEL_B"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        assert citations == [], f"Kỳ vọng [] khi xung đột model nhưng nhận được: {citations}"
+
+        facts = _detect_missing_facts(q, IntentEnum.DOCUMENT_REQUEST)
+        assert any("mâu thuẫn" in f.lower() or "xác nhận" in f.lower() or "model" in f.lower() for f in facts)
+
+    def test_model_02_serial_without_model_mapping(self, memory_db):
+        """MODEL-02: 'Chỉ có serial [SERIAL_A], chưa có bảng liên kết model' -> không suy luận model."""
+        q = "Chỉ có serial [SERIAL_A], chưa có bảng liên kết model"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        assert citations == [], f"Kỳ vọng [] khi chỉ có serial chưa có mapping nhưng nhận được: {citations}"
+
+    def test_model_05_serial_out_of_range(self, memory_db):
+        """MODEL-05: 'Serial [SERIAL_B] ngoài dải áp dụng của manual MODEL_A' -> từ chối nguồn."""
+        q = "Serial [SERIAL_B] ngoài dải áp dụng của manual MODEL_A"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        assert citations == [], f"Kỳ vọng [] khi serial ngoài dải áp dụng nhưng nhận được: {citations}"
+
+    def test_model_06_model_variant_mismatch(self, memory_db):
+        """MODEL-06: Khách hỏi biến thể MODEL_A-X trong khi DB chỉ có MODEL_A-H -> loại bỏ biến thể không khớp."""
+        q = "Xin manual cho biến thể MODEL_A-X"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        # Không được trả về MODEL_A-H
+        for c in citations:
+            assert "MODEL_A-H" not in (c.product_model or "")
+            assert "MODEL_A-H" not in c.document_title
+
+    def test_model_12_wrong_model_rejected(self, memory_db):
+        """MODEL-12: Ticket hỏi ACS580 nhưng tài liệu là SD700 -> chỉ trả về đúng model ACS580."""
+        q = "Biến tần ACS580 báo lỗi 2310"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        assert len(citations) >= 1
+        for c in citations:
+            assert "SD700" not in c.document_title, f"Sai model: nguồn SD700 bị trả về cho câu hỏi ACS580: {c.document_title}"
+
+
+class TestCRM51RevisionApplicability:
+    """Kiểm tra tính áp dụng của phiên bản Revision (MODEL-04, MODEL-17, VN-09)."""
+
+    def test_model_04_revision_mismatch_rejected(self, memory_db):
+        """MODEL-04: 'Cần rev.C nhưng hệ thống chỉ có rev.A đã lỗi thời' -> không trả về rev.A."""
+        # Chỉ tạo DB có rev.A
+        temp_engine = create_engine("sqlite:///:memory:", poolclass=StaticPool)
+        Base.metadata.create_all(temp_engine)
+        Session = sessionmaker(bind=temp_engine, expire_on_commit=False)
+        sess = Session()
+        try:
+            p = KnowledgePassage(
+                id=uuid.uuid4(),
+                document_name="SD700 manual",
+                passage_content="SD700 nội dung cũ",
+                passage_metadata={"version": "rev.A", "revision": "rev.A", "effective_status": "current", "product_model": "SD700"},
+                is_approved=True,
+            )
+            sess.add(p)
+            sess.commit()
+
+            q = "Cần rev.C nhưng hệ thống chỉ có rev.A đã lỗi thời"
+            citations = asyncio.run(search_knowledge_passages(query=q, db=sess, limit=3))
+            # Không được trả về rev.A như bản phù hợp
+            for c in citations:
+                assert "rev.a" not in (c.version or "").lower(), f"Trả về rev.A đã lỗi thời: {c.version}"
+        finally:
+            sess.close()
+
+    def test_model_17_revision_conflict_rejected(self, memory_db):
+        """MODEL-17: 'Manual rev.D mới hơn nhưng máy cũ cần rev.C' -> không trả về rev.D."""
+        temp_engine = create_engine("sqlite:///:memory:", poolclass=StaticPool)
+        Base.metadata.create_all(temp_engine)
+        Session = sessionmaker(bind=temp_engine, expire_on_commit=False)
+        sess = Session()
+        try:
+            p = KnowledgePassage(
+                id=uuid.uuid4(),
+                document_name="Manual rev.D mới",
+                passage_content="Nội dung rev.D",
+                passage_metadata={"version": "rev.D", "revision": "rev.D", "effective_status": "current"},
+                is_approved=True,
+            )
+            sess.add(p)
+            sess.commit()
+
+            q = "Manual rev.D mới hơn nhưng máy cũ cần rev.C"
+            citations = asyncio.run(search_knowledge_passages(query=q, db=sess, limit=3))
+            for c in citations:
+                assert "rev.d" not in (c.version or "").lower(), f"Trả về rev.D sai phạm vi cho máy cần rev.C: {c.version}"
+        finally:
+            sess.close()
+
+    def test_vn_09_exclude_revision(self, memory_db):
+        """VN-09: 'Cần tài liệu rev.B, đừng dùng rev.A' -> loại trừ rev.A."""
+        q = "Cần tài liệu SD700, đừng dùng rev.A"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        for c in citations:
+            assert "rev.a" not in (c.version or "").lower(), f"Đã yêu cầu không dùng rev.A nhưng bị trả về: {c.version}"
+
+
+class TestCRM51StatusApplicability:
+    """Kiểm tra lọc bỏ tài liệu Draft, Withdrawn, Revoked, Superseded (MODEL-10, MODEL-20, DAT 04, SEC 04)."""
+
+    def test_model_10_draft_status_rejected(self, memory_db):
+        """MODEL-10: Tài liệu đúng model nhưng trạng thái Draft (is_approved=False) -> tuyệt đối không trả về."""
+        q = "Tài liệu thiết kế MODEL_A"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        for c in citations:
+            assert "[DRAFT]" not in c.document_title, f"Tài liệu Draft bị lọt vào citations: {c.document_title}"
+            assert c.status != "draft"
+
+    def test_model_20_withdrawn_status_rejected(self, memory_db):
+        """MODEL-20: Tài liệu đúng model nhưng đã bị thu hồi quyền (withdrawn) -> không sử dụng hay xuất."""
+        q = "Tài liệu MODEL_A cũ đã thu hồi"
+        citations = asyncio.run(search_knowledge_passages(query=q, db=memory_db, limit=3))
+        for c in citations:
+            assert "thu hồi" not in c.document_title.lower(), f"Tài liệu bị thu hồi bị lọt vào citations: {c.document_title}"
+            assert c.status != "withdrawn"
+
+
+class TestCRM51AbstentionAndHonestDraft:
+    """Kiểm tra hành vi từ chối trung thực (Abstention) khi citations=[] (SUP 03, SUP 07)."""
+
+    def test_empty_citations_document_request_honest_draft(self):
+        """Khi citations=[] trong DOCUMENT_REQUEST: nêu rõ không có nguồn phù hợp, KHÔNG bịa đã trích xuất."""
+        draft = _compose_neutral_draft(
+            ticket_description="Xin manual của động cơ, chưa biết model",
+            intent=IntentEnum.DOCUMENT_REQUEST,
+            citations=[],
+            missing_facts=["Mã hiệu model chính xác của thiết bị"],
+        )
+        # SUP 03 / CRM-51: Tuyệt đối KHÔNG có cụm từ khẳng định đã đính kèm tài liệu
+        assert "đã trích xuất các phần hướng dẫn" not in draft, f"Tuyên bố trích xuất tài liệu khi citations rỗng: {draft}"
+        assert "không có nguồn phù hợp" in draft, f"Thiếu thông báo không có nguồn phù hợp: {draft}"
+        # Đề xuất chuyển kỹ sư
+        assert "kỹ sư" in draft.lower() or "ky su" in draft.lower()
+        # Giới hạn < 180 từ
+        assert len(draft.split()) < 180
+
+    def test_empty_citations_technical_escalation_honest_draft(self):
+        """Khi citations=[] trong TECHNICAL_ESCALATION: nêu rõ không có nguồn phù hợp, KHÔNG có IGBT template."""
+        draft = _compose_neutral_draft(
+            ticket_description="Biến tần báo lỗi E-01 khi chạy 7,5 kW",
+            intent=IntentEnum.TECHNICAL_ESCALATION,
+            citations=[],
+            missing_facts=["Mã Serial (S/N) của thiết bị"],
+        )
+        assert "không có nguồn phù hợp" in draft, f"Thiếu thông báo không có nguồn phù hợp: {draft}"
+        assert "IGBT" not in draft, f"Chứa template IGBT cứng: {draft}"
+        assert "P1120" not in draft, f"Chứa template P1120 cứng: {draft}"
+        # Giữ nguyên thực thể kỹ thuật
+        assert "E-01" in draft
+        assert "7,5 kW" in draft
+        assert len(draft.split()) < 180
+
+    def test_pipeline_with_missing_model_returns_empty_citations_and_honest_draft(self, memory_db):
+        """E2E Pipeline: Ticket thiếu model -> citations=[], draft trung thực không bịa nguồn."""
+        pkg = asyncio.run(run_copilot_pipeline(
+            ticket_description="Xin manual của động cơ, chưa biết model",
+            db=memory_db,
+        ))
+        assert pkg.citations == [], f"Kỳ vọng citations=[] nhưng nhận được: {pkg.citations}"
+        assert "không có nguồn phù hợp" in pkg.draft
+        assert "đã trích xuất các phần hướng dẫn" not in pkg.draft
+        assert pkg.is_hazard_escalated is False
+        assert len(pkg.draft.split()) < 180

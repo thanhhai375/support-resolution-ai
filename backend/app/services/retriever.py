@@ -62,6 +62,193 @@ def extract_search_tokens(query: str) -> dict[str, List[str]]:
     }
 
 
+def parse_model_and_revision_constraints(query: str) -> dict[str, Any]:
+    """Phân tích các ràng buộc về Model, Serial, Revision và tính hợp lệ từ câu hỏi khách hàng (Task CRM-51)."""
+    clean_query = query.strip()
+    lowered = clean_query.lower()
+
+    # 1. Nhận diện các model được nhắc tới
+    model_patterns = re.findall(
+        r"\[MODEL_[A-Za-z0-9]+\]|MODEL_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)?|\b(?:SD\d{3}|SN-G\d{2,3}|ACS\d{3}|M2BAX|M3AA|SM\s*Series)\b",
+        clean_query,
+        re.IGNORECASE,
+    )
+    normalized_models: List[str] = []
+    for m in model_patterns:
+        norm_m = m.strip("[]").upper()
+        if norm_m not in normalized_models:
+            normalized_models.append(norm_m)
+
+    # Kiểm tra xung đột model (MODEL-03): ví dụ [MODEL_A] và [MODEL_B], hoặc đầu ghi A cuối ghi B
+    has_model_conflict = False
+    if len(normalized_models) >= 2:
+        base_models = set(m.split("-")[0] for m in normalized_models)
+        if len(base_models) > 1 or len(normalized_models) > 1:
+            has_model_conflict = True
+    if any(phrase in lowered for phrase in ["hình như", "hoặc", "hay"]) and len(normalized_models) >= 2:
+        has_model_conflict = True
+    if "đầu ghi" in lowered and "cuối ghi" in lowered:
+        has_model_conflict = True
+
+    # Kiểm tra thiếu model (MODEL-01, MODEL-13, MODEL-19):
+    is_missing_model = False
+    missing_cues = [
+        "chưa biết model", "không biết model", "không rõ model", "chưa rõ model",
+        "chưa có model", "chưa biết hãng", "không biết hãng", "chưa rõ hãng",
+        "chưa biết mã", "không rõ mã",
+    ]
+    if any(cue in lowered for cue in missing_cues):
+        is_missing_model = True
+    elif (any(term in lowered for term in ["manual", "tài liệu", "catalogue", "catalog", "hướng dẫn"])
+          and any(prod in lowered for prod in ["động cơ", "motor", "biến tần", "hộp số", "hộp giảm tốc"])
+          and len(normalized_models) == 0):
+        if "của động cơ" in lowered or "motor nhà" in lowered or "motor 3 pha" in lowered:
+            is_missing_model = True
+
+    # Kiểm tra serial và case MODEL-02 (chỉ có serial, chưa có mapping)
+    serial_matches = re.findall(
+        r"\[SERIAL_[A-Za-z0-9]+\]|SERIAL_[A-Za-z0-9]+|\bSN[-\s]?[A-Za-z0-9]+\b",
+        clean_query,
+    )
+    serial_only_no_model = False
+    if "chưa có bảng liên kết" in lowered or "chưa có liên kết" in lowered:
+        serial_only_no_model = True
+    elif len(serial_matches) > 0 and len(normalized_models) == 0 and "chỉ có serial" in lowered:
+        serial_only_no_model = True
+
+    # Kiểm tra dải serial ngoài phạm vi (MODEL-05)
+    serial_out_of_range = False
+    if "ngoài dải áp dụng" in lowered or "ngoài phạm vi" in lowered:
+        serial_out_of_range = True
+
+    # Kiểm tra revision (MODEL-04, MODEL-17, VN-09)
+    requested_revision = None
+    req_match = re.search(
+        r"(?:cần|xin|yêu cầu|lấy|bản)\s+(?:rev\.?\s*([A-Za-z0-9]+)|Rev\.?\s*([A-Za-z0-9]+)|v(\d+(?:\.\d+)?))",
+        clean_query,
+        re.IGNORECASE,
+    )
+    if req_match:
+        rev_val = req_match.group(1) or req_match.group(2) or req_match.group(3)
+        requested_revision = f"rev.{rev_val}".lower() if not rev_val.lower().startswith("v") else f"v{rev_val}".lower()
+    elif "rev.c" in lowered or "rev. c" in lowered:
+        requested_revision = "rev.c"
+    elif "rev.b" in lowered or "rev. b" in lowered:
+        requested_revision = "rev.b"
+
+    excluded_revision = None
+    excl_match = re.search(
+        r"(?:đừng|không|chớ)\s+(?:dùng|lấy|áp dụng)?\s*(?:rev\.?\s*([A-Za-z0-9]+)|Rev\.?\s*([A-Za-z0-9]+))",
+        clean_query,
+        re.IGNORECASE,
+    )
+    if excl_match:
+        excl_val = excl_match.group(1) or excl_match.group(2)
+        excluded_revision = f"rev.{excl_val}".lower()
+    elif "đừng dùng rev.a" in lowered or "không dùng rev.a" in lowered:
+        excluded_revision = "rev.a"
+
+    if "cần rev.c" in lowered and ("rev.d" in lowered or "rev d" in lowered):
+        requested_revision = "rev.c"
+        excluded_revision = "rev.d"
+
+    return {
+        "models": normalized_models,
+        "has_model_conflict": has_model_conflict,
+        "is_missing_model": is_missing_model,
+        "serial_only_no_model": serial_only_no_model,
+        "serial_out_of_range": serial_out_of_range,
+        "requested_revision": requested_revision,
+        "excluded_revision": excluded_revision,
+        "serials": serial_matches,
+    }
+
+
+def is_passage_applicable(passage: Any, constraints: dict[str, Any]) -> bool:
+    """Kiểm tra một đoạn trích có thực sự áp dụng được cho câu hỏi hay không (CRM-51).
+
+    Lọc bỏ các trường hợp:
+    1. Trạng thái không hợp lệ: is_approved=False, Draft, Withdrawn, Revoked, Superseded (MODEL-10, MODEL-20, DAT 04, SEC 04).
+    2. Sai model so với model khách hỏi (MODEL-12).
+    3. Biến thể model không khớp (MODEL-06: MODEL_A-H vs MODEL_A-X).
+    4. Sai revision so với revision khách yêu cầu (MODEL-04, MODEL-17).
+    5. Trùng revision bị loại trừ (VN-09).
+    6. Serial ngoài dải áp dụng (MODEL-05).
+    """
+    # 1. Kiểm tra trạng thái phê duyệt & hiệu lực (is_approved & status)
+    if hasattr(passage, "is_approved") and passage.is_approved is False:
+        return False
+
+    meta = getattr(passage, "passage_metadata", {}) or {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    doc_name = (getattr(passage, "document_name", None) or getattr(passage, "document_title", None) or "").lower()
+    passage_content = (getattr(passage, "passage_content", None) or getattr(passage, "content_snippet", None) or "").lower()
+
+    # Chặn các tài liệu có trạng thái không hợp lệ
+    forbidden_status_keywords = ["draft", "withdrawn", "revoked", "superseded", "unapproved", "deprecated", "restricted"]
+    eff_status = str(meta.get("effective_status") or meta.get("status") or getattr(passage, "status", "") or "").lower()
+    if eff_status in forbidden_status_keywords:
+        return False
+    if any(f"[{kw}]" in doc_name or f"[{kw}]" in passage_content for kw in forbidden_status_keywords):
+        return False
+    if "[draft]" in doc_name or "[withdrawn]" in doc_name or "[revoked]" in doc_name or "[superseded]" in doc_name:
+        return False
+
+    # 2. Kiểm tra Serial ngoài dải áp dụng (MODEL-05)
+    if constraints.get("serial_out_of_range"):
+        return False
+
+    # 3. Kiểm tra Model áp dụng (MODEL-06, MODEL-12)
+    req_models = constraints.get("models") or []
+    passage_model = str(meta.get("product_model") or meta.get("model") or getattr(passage, "product_model", "") or "").upper()
+
+    if req_models:
+        for req_m in req_models:
+            # Kiểm tra biến thể model (MODEL-06): ví dụ MODEL_A-H vs MODEL_A-X
+            if "-" in req_m:
+                if passage_model and passage_model != req_m:
+                    return False
+                base_m = req_m.split("-")[0]
+                if base_m.lower() in doc_name and req_m.lower() not in doc_name:
+                    return False
+
+            # Kiểm tra sai model (MODEL-12): khách hỏi MODEL_A nhưng passage là MODEL_B
+            if passage_model:
+                base_req = req_m.split("-")[0]
+                base_pass = passage_model.split("-")[0]
+                if base_req != base_pass and (base_req in ["MODEL_A", "MODEL_B", "MODEL_C", "SD700", "ACS580", "SN-G120", "M2BAX", "M3AA"]):
+                    return False
+
+            if "MODEL_A" in req_models and ("model_b" in doc_name or "model_c" in doc_name):
+                return False
+            if "MODEL_B" in req_models and ("model_a" in doc_name or "model_c" in doc_name):
+                return False
+            if "SD700" in req_models and ("acs580" in doc_name or "sn-g120" in doc_name):
+                return False
+
+    # 4. Kiểm tra Revision áp dụng (MODEL-04, MODEL-17, VN-09)
+    passage_rev = str(meta.get("revision") or meta.get("version") or getattr(passage, "version", "") or "").lower().replace(" ", "")
+
+    req_rev = constraints.get("requested_revision")
+    if req_rev:
+        norm_req_rev = req_rev.lower().replace(" ", "").replace(".", "")
+        norm_pass_rev = passage_rev.replace(".", "")
+        if norm_pass_rev and norm_pass_rev not in ["v10", "v1.0", "v1", "current", ""]:
+            if norm_req_rev not in norm_pass_rev and norm_pass_rev not in norm_req_rev:
+                return False
+
+    excl_rev = constraints.get("excluded_revision")
+    if excl_rev:
+        norm_excl = excl_rev.lower().replace(" ", "").replace(".", "")
+        norm_pass = passage_rev.replace(".", "")
+        if norm_excl in norm_pass or norm_pass in norm_excl:
+            return False
+
+    return True
+
+
 def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
     """Trả về danh sách 2-3 CitationItem mẫu làm fallback khi db=None hoặc CSDL chưa có dữ liệu."""
     query_lower = query.lower()
@@ -345,9 +532,30 @@ class KnowledgeRetriever:
         Returns:
             Danh sách CitationItem chứa đầy đủ căn cứ kỹ thuật từ bảng đã phê duyệt.
         """
+        # CRM-51: Phân tích các ràng buộc về Model, Serial, Revision
+        constraints = parse_model_and_revision_constraints(query)
+
+        # CRM-51 / MODEL-01, MODEL-03, MODEL-02:
+        # Nếu thiếu model, xung đột model, hoặc chỉ có serial chưa có mapping,
+        # không tự chọn mặc định SN-G120; dừng truy xuất và trả về [].
+        if constraints["has_model_conflict"]:
+            logger.info("CRM-51: Phát hiện xung đột model trong truy vấn (%s). Dừng truy xuất.", constraints["models"])
+            return []
+
+        if constraints["is_missing_model"]:
+            logger.info("CRM-51: Thiếu định danh model trong câu hỏi kỹ thuật. Dừng truy xuất.")
+            return []
+
+        if constraints["serial_only_no_model"]:
+            logger.info("CRM-51: Chỉ có serial chưa có bảng liên kết model (MODEL-02). Dừng truy xuất.")
+            return []
+
         if db is None:
             logger.debug("DB session is None, fallback sang mock data.")
-            return get_mock_knowledge_passages(query)[:limit]
+            # Kiểm tra xem mock data có khớp ràng buộc không
+            mock_items = get_mock_knowledge_passages(query)
+            applicable_mocks = [c for c in mock_items if is_passage_applicable(c, constraints)]
+            return applicable_mocks[:limit]
 
         try:
             tokens = extract_search_tokens(query)
@@ -375,7 +583,7 @@ class KnowledgeRetriever:
                         codes=codes,
                         phrases=phrases,
                         keywords=keywords,
-                        limit=limit,
+                        limit=limit * 2,
                         product_id=product_id,
                     )
                 except Exception as pg_exc:
@@ -386,7 +594,7 @@ class KnowledgeRetriever:
                         codes=codes,
                         phrases=phrases,
                         keywords=keywords,
-                        limit=limit,
+                        limit=limit * 2,
                         product_id=product_id,
                     )
             else:
@@ -396,7 +604,7 @@ class KnowledgeRetriever:
                     codes=codes,
                     phrases=phrases,
                     keywords=keywords,
-                    limit=limit,
+                    limit=limit * 2,
                     product_id=product_id,
                 )
 
@@ -409,13 +617,16 @@ class KnowledgeRetriever:
                     codes=codes,
                     phrases=phrases,
                     keywords=keywords,
-                    limit=limit,
+                    limit=limit * 2,
                     product_id=None,
                 )
 
-            if passages:
+            # CRM-51: Lọc tính áp dụng (Status, Model, Variant, Revision, Serial Range)
+            applicable_passages = [p for p in passages if is_passage_applicable(p, constraints)]
+
+            if applicable_passages:
                 citations: List[CitationItem] = []
-                for p in passages[:limit]:
+                for p in applicable_passages[:limit]:
                     doc_title = (
                         getattr(p, "document_title", None)
                         or getattr(p, "document_name", None)

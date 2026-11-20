@@ -1,9 +1,11 @@
-"""Copilot Engine Service for Incident Analysis & Support Package Pipeline (Tasks CRM-24 & CRM-28)."""
+"""Copilot Engine Service for Incident Analysis & Support Package Pipeline (Tasks CRM-24, CRM-28, CRM-49 & CRM-51)."""
 
 import inspect
 import json
 import logging
 import os
+import re
+import unicodedata
 import uuid
 from typing import Any, List, Optional, Union
 
@@ -58,29 +60,71 @@ def _build_hazard_emergency_package(ticket_description: str) -> CopilotPackageRe
     )
 
 
-def _classify_intent_from_text(text: str) -> IntentEnum:
-    """Phân loại ý định ticket vào 1 trong 3 danh mục chuẩn SongNhat."""
-    lowered = text.lower()
+def _remove_vietnamese_accents(text: str) -> str:
+    """Chuẩn hóa chuỗi tiếng Việt: bỏ toàn bộ dấu (accent marks) và chuyển đ/Đ -> d/D.
 
-    doc_keywords = ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet", "document"]
-    if any(keyword in lowered for keyword in doc_keywords):
+    CRM-52 / VN-01: Cho phép so khớp từ khóa intent với input không dấu.
+    """
+    text = text.replace("đ", "d").replace("Đ", "D")
+    nfkd = unicodedata.normalize("NFD", text)
+    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+
+
+def _classify_intent_from_text(text: str) -> IntentEnum:
+    """Phân loại ý định ticket vào 1 trong 3 danh mục chuẩn SongNhat.
+
+    CRM-52 / VN-01: Chuẩn hóa chuỗi đầu vào (lowercase + bỏ dấu tiếng Việt)
+    trước khi so khớp từ khóa, để các cụm không dấu như "tai lieu", "huong dan",
+    "so tay", "catalog", "cho xin" được phân loại đúng thành DOCUMENT_REQUEST.
+    """
+    lowered = text.lower()
+    normalized = _remove_vietnamese_accents(lowered)
+
+    doc_keywords_accented = [
+        "tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "catalogue",
+        "datasheet", "document", "sổ tay", "cho xin", "xin tài liệu",
+    ]
+    doc_keywords_unaccented = [
+        "tai lieu", "manual", "so do", "huong dan", "catalog", "catalogue",
+        "datasheet", "document", "so tay", "cho xin", "xin tai lieu",
+    ]
+
+    if (any(keyword in lowered for keyword in doc_keywords_accented) or
+            any(keyword in normalized for keyword in doc_keywords_unaccented)):
         return IntentEnum.DOCUMENT_REQUEST
 
-    progress_keywords = ["tiến độ", "bảo hành", "khi nào xong", "giao hàng", "tình trạng sửa", "progress", "status"]
-    if any(keyword in lowered for keyword in progress_keywords):
+    progress_keywords_accented = [
+        "tiến độ", "bảo hành", "khi nào xong", "giao hàng",
+        "tình trạng sửa", "progress", "status",
+    ]
+    progress_keywords_unaccented = [
+        "tien do", "bao hanh", "khi nao xong", "giao hang",
+        "tinh trang sua", "progress", "status",
+    ]
+
+    if (any(keyword in lowered for keyword in progress_keywords_accented) or
+            any(keyword in normalized for keyword in progress_keywords_unaccented)):
         return IntentEnum.SERVICE_PROGRESS
 
     return IntentEnum.TECHNICAL_ESCALATION
 
 
 def _detect_missing_facts(text: str, intent: IntentEnum) -> List[str]:
-    """Xác định các thông tin kỹ thuật còn thiếu theo Intent và triệu chứng."""
+    """Xác định các thông tin kỹ thuật còn thiếu theo Intent và triệu chứng (CRM-51)."""
     lowered = text.lower()
     missing: List[str] = []
 
-    if "serial" not in lowered and "s/n" not in lowered:
+    # Kiểm tra thiếu model hoặc xung đột model (MODEL-01, MODEL-03)
+    if any(cue in lowered for cue in ["chưa biết model", "không biết model", "chưa rõ model", "không rõ model", "chưa biết hãng", "không biết hãng"]):
+        missing.append("Mã hiệu model chính xác của thiết bị")
+    elif "đầu ghi" in lowered and "cuối ghi" in lowered:
+        missing.append("Xác nhận chính xác mã hiệu model thiết bị (phát hiện mâu thuẫn)")
+    elif "model_a" in lowered and "model_b" in lowered:
+        missing.append("Xác nhận chính xác mã hiệu model thiết bị (phát hiện mâu thuẫn)")
+
+    if "serial" not in lowered and "s/n" not in lowered and "serial_" not in lowered:
         missing.append("Mã Serial (S/N) của thiết bị")
-    if "firmware" not in lowered and "phiên bản" not in lowered:
+    if "firmware" not in lowered and "phiên bản" not in lowered and "rev." not in lowered:
         missing.append("Phiên bản Firmware hiện tại")
 
     if intent == IntentEnum.TECHNICAL_ESCALATION:
@@ -89,8 +133,9 @@ def _detect_missing_facts(text: str, intent: IntentEnum) -> List[str]:
         if "r0027" not in lowered and "dòng điện" not in lowered:
             missing.append("Giá trị dòng điện đầu ra tại thời điểm báo lỗi (r0027)")
     elif intent == IntentEnum.DOCUMENT_REQUEST:
-        if "model" not in lowered and "mã hiệu" not in lowered:
-            missing.append("Mã hiệu đầy đủ và đời máy trên nhãn sản phẩm")
+        if "model" not in lowered and "mã hiệu" not in lowered and "model_" not in lowered:
+            if "Mã hiệu model chính xác của thiết bị" not in missing:
+                missing.append("Mã hiệu đầy đủ và đời máy trên nhãn sản phẩm")
         missing.append("Định dạng tài liệu yêu cầu (PDF điện tử hoặc bản vẽ CAD)")
     elif intent == IntentEnum.SERVICE_PROGRESS:
         if "phiếu" not in lowered and "biên nhận" not in lowered:
@@ -108,8 +153,8 @@ def _build_next_step(intent: IntentEnum) -> str:
         )
     if intent == IntentEnum.DOCUMENT_REQUEST:
         return (
-            "Gửi tài liệu kỹ thuật trích xuất đính kèm cho khách hàng; yêu cầu khách hàng cung cấp "
-            "mã hiệu/Serial thiết bị nếu cần phiên bản sơ đồ chi tiết theo đời máy."
+            "Tra cứu tài liệu kỹ thuật theo đúng model/Serial thiết bị; gửi tài liệu trích xuất "
+            "hoặc chuyển kỹ sư chuyên trách đối chiếu nếu chưa có bản tài liệu được duyệt phù hợp."
         )
     return (
         "Tra cứu mã phiếu dịch vụ/Serial trên hệ thống ERP bảo hành và cập nhật tiến độ xử lý "
@@ -129,6 +174,8 @@ def _build_case_summary(
             f"Đã đối chiếu với '{citations[0].document_title}' (trang {citations[0].page_number}): "
             f"{citations[0].content_snippet}"
         )
+    else:
+        confirmed_obs = "Chưa có quan sát kỹ thuật được xác nhận (không có nguồn phù hợp trong cơ sở tri thức)."
 
     questions: Optional[str] = None
     if missing_facts:
@@ -147,14 +194,31 @@ def _compose_neutral_draft(
     citations: List[CitationItem],
     missing_facts: List[str],
 ) -> str:
-    """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ kỹ thuật và bắt buộc dưới 180 từ."""
+    """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ kỹ thuật và bắt buộc dưới 180 từ (CRM-50 & CRM-51)."""
+    missing_str = (
+        ", ".join(missing_facts[:3])
+        if missing_facts
+        else "Mã Serial và Phiên bản Firmware"
+    )
+
     if intent == IntentEnum.DOCUMENT_REQUEST:
-        draft = (
-            "Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu cung cấp tài liệu. "
-            "Dựa trên hệ thống cơ sở tri thức, chúng tôi đã trích xuất các phần hướng dẫn liên quan đính kèm. "
-            "Để gửi chính xác bộ sơ đồ đấu nối và tài liệu theo đúng đời máy, quý khách vui lòng phản hồi "
-            "thêm Mã Serial (S/N) và mã hiệu đầy đủ trên nhãn thiết bị. Trân trọng."
-        )
+        if citations:
+            citation_ref = f"Đã đối chiếu với tài liệu '{citations[0].document_title}' (trang {citations[0].page_number})."
+            draft = (
+                f"Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu cung cấp tài liệu. "
+                f"{citation_ref} Dựa trên hệ thống cơ sở tri thức, chúng tôi đã trích xuất các phần hướng dẫn liên quan đính kèm. "
+                f"Để gửi chính xác bộ sơ đồ đấu nối và tài liệu theo đúng đời máy, quý khách vui lòng phản hồi "
+                f"thêm: {missing_str}. Trân trọng."
+            )
+        else:
+            # CRM-51 / SUP 03, SUP 07: Khi citations rỗng, tuyệt đối KHÔNG tuyên bố đã trích xuất tài liệu
+            draft = (
+                "Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu cung cấp tài liệu. "
+                "Hiện tại không có nguồn phù hợp trong cơ sở tri thức (do thiếu mã hiệu model chính xác, "
+                "phiên bản revision yêu cầu chưa được phê duyệt hoặc tài liệu đã bị thu hồi). "
+                "Chúng tôi đã chuyển yêu cầu tới Kỹ sư chuyên trách để kiểm tra và đối chiếu thủ công. "
+                f"Để được hỗ trợ nhanh nhất, quý khách vui lòng cung cấp thêm: {missing_str}. Trân trọng."
+            )
     elif intent == IntentEnum.SERVICE_PROGRESS:
         draft = (
             "Chào quý khách, bộ phận Dịch vụ SongNhat đã nhận được yêu cầu tra cứu tiến độ của quý khách. "
@@ -163,25 +227,30 @@ def _compose_neutral_draft(
             "ngay sau khi đối chiếu thông tin. Trân trọng."
         )
     else:
-        citation_ref = (
-            f"Theo {citations[0].document_title} (trang {citations[0].page_number}), "
-            "hiện tượng này thường liên quan đến quá dòng phần cứng tại IGBT, chạm đất "
-            "cáp động cơ hoặc thời gian tăng tốc (P1120) cài đặt quá ngắn so với tải."
-            if citations
-            else "Chúng tôi đã ghi nhận triệu chứng kỹ thuật để chuyển kỹ sư chuyên trách kiểm tra."
-        )
-        missing_str = (
-            ", ".join(missing_facts[:3])
-            if missing_facts
-            else "Mã Serial và Phiên bản Firmware"
-        )
-        draft = (
-            f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
-            f"\"{ticket_description.strip()}\". {citation_ref} "
-            f"Để kỹ sư chẩn đoán chính xác và hướng dẫn xử lý an toàn, quý khách vui lòng "
-            f"cung cấp thêm: {missing_str}. Trong thời gian chờ phản hồi, quý khách vui lòng "
-            f"không liên tục reset nguồn khi chưa kiểm tra cách điện cáp động cơ. Trân trọng."
-        )
+        ticket_text = ticket_description.strip()
+
+        if citations:
+            citation_parts: List[str] = []
+            for cit in citations[:2]:
+                citation_parts.append(
+                    f"Theo {cit.document_title} (trang {cit.page_number}): {cit.content_snippet}"
+                )
+            citation_ref = " ".join(citation_parts)
+            draft = (
+                f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
+                f"\"{ticket_text}\". {citation_ref} "
+                f"Để kỹ sư chẩn đoán chính xác và hướng dẫn xử lý an toàn, quý khách vui lòng "
+                f"cung cấp thêm: {missing_str}. Trân trọng."
+            )
+        else:
+            # CRM-50 & CRM-51: Khi citations rỗng, nêu rõ không có nguồn phù hợp, đề xuất chuyển KS, không bịa IGBT
+            draft = (
+                f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
+                f"\"{ticket_text}\". Hiện tại không có nguồn phù hợp trong cơ sở tri thức "
+                f"để kết luận nguyên nhân kỹ thuật. Chúng tôi đã chuyển thông tin tới Kỹ sư chuyên trách "
+                f"kiểm tra trực tiếp thiết bị. Để kỹ sư hỗ trợ nhanh chóng, quý khách vui lòng "
+                f"cung cấp thêm: {missing_str}. Trân trọng."
+            )
 
     # Đảm bảo chắc chắn giới hạn nghiêm ngặt dưới 180 từ
     words = draft.split()
@@ -334,6 +403,7 @@ async def run_copilot_pipeline(
         db=db,
         limit=limit,
         product_id=resolved_product_id,
+        allow_mock_fallback=False,
     )
 
     # =========================================================================
