@@ -181,7 +181,14 @@ def _compose_neutral_draft(
     citations: List[CitationItem],
     missing_facts: List[str],
 ) -> str:
-    """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ kỹ thuật và bắt buộc dưới 180 từ."""
+    """Soạn thảo phản hồi tiếng Việt trung tính, có căn cứ kỹ thuật và bắt buộc dưới 180 từ.
+
+    CRM-50: Sinh nội dung bám sát câu hỏi gốc và đoạn trích thật (Grounding),
+    thay vì sử dụng template IGBT/P1120 cứng cho mọi TECHNICAL_ESCALATION.
+    - Bảo toàn nguyên vẹn các thực thể kỹ thuật trong câu hỏi gốc (mã lỗi, đơn vị,
+      serial, model) — không tự biến đổi sang mã/đơn vị khác.
+    - Nếu không có trích dẫn phù hợp, nêu rõ thông tin thiếu và đề xuất chuyển KS xử lý.
+    """
     if intent == IntentEnum.DOCUMENT_REQUEST:
         draft = (
             "Chào quý khách, bộ phận Hỗ trợ Kỹ thuật SongNhat đã tiếp nhận yêu cầu cung cấp tài liệu. "
@@ -197,13 +204,26 @@ def _compose_neutral_draft(
             "ngay sau khi đối chiếu thông tin. Trân trọng."
         )
     else:
-        citation_ref = (
-            f"Theo {citations[0].document_title} (trang {citations[0].page_number}), "
-            "hiện tượng này thường liên quan đến quá dòng phần cứng tại IGBT, chạm đất "
-            "cáp động cơ hoặc thời gian tăng tốc (P1120) cài đặt quá ngắn so với tải."
-            if citations
-            else "Chúng tôi đã ghi nhận triệu chứng kỹ thuật để chuyển kỹ sư chuyên trách kiểm tra."
-        )
+        # CRM-50: Sinh draft bám sát citations thật (grounded) thay vì template cứng
+        ticket_text = ticket_description.strip()
+
+        if citations:
+            # Trích xuất nội dung từ các citations thực tế để trả lời đúng trọng tâm
+            citation_parts: List[str] = []
+            for i, cit in enumerate(citations[:2]):  # Tối đa 2 trích dẫn để giữ dưới 180 từ
+                citation_parts.append(
+                    f"Theo {cit.document_title} (trang {cit.page_number}): "
+                    f"{cit.content_snippet}"
+                )
+            citation_ref = " ".join(citation_parts)
+        else:
+            # Không có trích dẫn phù hợp -> nêu rõ thiếu căn cứ, đề xuất chuyển KS
+            citation_ref = (
+                "Hiện chưa tìm được tài liệu kỹ thuật phù hợp trong cơ sở tri thức "
+                "để kết luận nguyên nhân. Chúng tôi đề xuất chuyển kỹ sư chuyên trách "
+                "kiểm tra trực tiếp thiết bị."
+            )
+
         missing_str = (
             ", ".join(missing_facts[:3])
             if missing_facts
@@ -211,10 +231,9 @@ def _compose_neutral_draft(
         )
         draft = (
             f"Chào quý khách, bộ phận Kỹ thuật SongNhat đã tiếp nhận thông tin sự cố: "
-            f"\"{ticket_description.strip()}\". {citation_ref} "
+            f"\"{ticket_text}\". {citation_ref} "
             f"Để kỹ sư chẩn đoán chính xác và hướng dẫn xử lý an toàn, quý khách vui lòng "
-            f"cung cấp thêm: {missing_str}. Trong thời gian chờ phản hồi, quý khách vui lòng "
-            f"không liên tục reset nguồn khi chưa kiểm tra cách điện cáp động cơ. Trân trọng."
+            f"cung cấp thêm: {missing_str}. Trân trọng."
         )
 
     # Đảm bảo chắc chắn giới hạn nghiêm ngặt dưới 180 từ
