@@ -3,6 +3,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react'
 
@@ -14,40 +15,118 @@ import {
   TOKEN_KEY,
 } from './token'
 
+import type { UserRole } from './token'
+import {
+  getCurrentUser,
+  revokeAccessToken,
+} from '../services/authService'
+import { DEMO_AUTH_ENABLED } from './demo'
+
 interface AuthContextValue {
   token: string | null
-  signIn: (token: string) => void
-  signOut: () => void
+  role: UserRole | null
+  signIn: (token: string) => Promise<void>
+  signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextValue | null>(
-  null
-)
+interface AuthSession {
+  token: string
+  role: UserRole
+}
+
+const AuthContext =
+  createContext<AuthContextValue | null>(null)
+
+// Xác định vai trò từ phiên đăng nhập
+async function resolveRole(token: string): Promise<UserRole> {
+  const claims = readClaims(token)
+
+  if (!claims) {
+    throw new Error(
+      'Token không hợp lệ hoặc đã hết hạn.'
+    )
+  }
+
+  // Chỉ dùng role trong token với chế độ demo
+  if (DEMO_AUTH_ENABLED && claims.demo) {
+    if (!claims.role) {
+      throw new Error('Vai trò demo không hợp lệ.')
+    }
+
+    return claims.role
+  }
+
+  // Backend CRM-40: xác thực và lấy role thực tế
+  const user = await getCurrentUser(token)
+
+  if (!readClaims(token)) {
+    throw new Error('Phiên đăng nhập đã hết hạn.')
+  }
+
+  return user.role
+}
 
 export function AuthProvider({
   children,
 }: {
   children: ReactNode
 }) {
-  const [token, setToken] = useState<string | null>(
-    getStoredToken
-  )
+  const [session, setSession] =
+    useState<AuthSession | null>(null)
 
-  function signOut() {
-    try {
-      localStorage.removeItem(TOKEN_KEY)
-      sessionStorage.removeItem(TOKEN_KEY)
-    } catch {
-      // Vẫn xóa phiên đăng nhập trong React State
-    }
+  const [restoring, setRestoring] = useState(true)
 
-    setToken(null)
+  const activeToken = useRef<string | null>(null)
+  const requestVersion = useRef(0)
+
+  const token = session?.token ?? null
+  const role = session?.role ?? null
+
+
+function clearSession() {
+  requestVersion.current += 1
+
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+    sessionStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // Vẫn xóa phiên trong React State
   }
 
-  function signIn(nextToken: string) {
-    if (!readClaims(nextToken)) {
+  activeToken.current = null
+  setSession(null)
+  setRestoring(false)
+}
+
+async function signOut() {
+  const currentToken = activeToken.current
+  const claims = readClaims(currentToken)
+
+  // Xóa phiên đăng nhập trên Frontend
+  clearSession()
+
+  // Không gọi Backend nếu không có token hoặc là demo
+  if (!currentToken || claims?.demo) {
+    return
+  }
+
+  try {
+    await revokeAccessToken(currentToken)
+  } catch {
+    window.alert(
+      'Đã đăng xuất khỏi thiết bị, nhưng chưa thể xác nhận thu hồi token trên máy chủ.'
+    )
+  }
+}
+
+  async function signIn(nextToken: string) {
+    const version = ++requestVersion.current
+
+    const nextRole = await resolveRole(nextToken)
+
+    if (version !== requestVersion.current) {
       throw new Error(
-        'Token đăng nhập không hợp lệ hoặc đã hết hạn.'
+        'Phiên đăng nhập đã thay đổi. Vui lòng thử lại.'
       )
     }
 
@@ -60,13 +139,65 @@ export function AuthProvider({
       )
     }
 
-    setToken(nextToken)
+    activeToken.current = nextToken
+
+    setSession({
+      token: nextToken,
+      role: nextRole,
+    })
+
+    setRestoring(false)
   }
 
-  // Đồng bộ phiên đăng nhập giữa các tab
+  // Khôi phục phiên và đồng bộ giữa các tab
   useEffect(() => {
-    const sync = () => {
-      setToken(getStoredToken())
+    async function sync(force = false) {
+      const storedToken = getStoredToken()
+
+      if (
+        !force &&
+        storedToken === activeToken.current
+      ) {
+        return
+      }
+
+      const version = ++requestVersion.current
+
+      if (!storedToken) {
+        clearSession()
+        return
+      }
+
+      setRestoring(true)
+      setSession(null)
+      activeToken.current = null
+
+      try {
+        const restoredRole =
+          await resolveRole(storedToken)
+
+        if (version !== requestVersion.current) {
+          return
+        }
+
+        if (getStoredToken() !== storedToken) {
+          void sync(true)
+          return
+        }
+
+        activeToken.current = storedToken
+
+        setSession({
+          token: storedToken,
+          role: restoredRole,
+        })
+
+        setRestoring(false)
+      } catch {
+        if (version === requestVersion.current) {
+          clearSession()
+        }
+      }
     }
 
     const onStorage = (event: StorageEvent) => {
@@ -74,42 +205,45 @@ export function AuthProvider({
         event.key === TOKEN_KEY ||
         event.key === null
       ) {
-        sync()
+        void sync(true)
       }
     }
 
+    const onFocus = () => {
+      void sync()
+    }
+
+    void sync(true)
+
     window.addEventListener('storage', onStorage)
-    window.addEventListener('focus', sync)
+    window.addEventListener('focus', onFocus)
 
     return () => {
+      requestVersion.current += 1
+
       window.removeEventListener('storage', onStorage)
-      window.removeEventListener('focus', sync)
+      window.removeEventListener('focus', onFocus)
     }
   }, [])
 
-  // Kiểm tra token hết hạn
+  // Kiểm tra thời hạn JWT
   useEffect(() => {
     if (!token) return
-
-    const claims = readClaims(token)
-
-    if (!claims) {
-      signOut()
-      return
-    }
 
     let timer: number
 
     function checkExpiry() {
-      const current = readClaims(token)
+      if (activeToken.current !== token) return
 
-      if (!current) {
-        signOut()
+      const claims = readClaims(token)
+
+      if (!claims) {
+        clearSession()
         return
       }
 
       const remaining =
-        current.exp * 1000 - Date.now()
+        claims.exp * 1000 - Date.now()
 
       timer = window.setTimeout(
         checkExpiry,
@@ -129,9 +263,24 @@ export function AuthProvider({
 
   return (
     <AuthContext.Provider
-      value={{ token, signIn, signOut }}
+      value={{ token, role, signIn, signOut }}
     >
-      {children}
+      {restoring ? (
+        <div
+          role="status"
+          style={{
+            minHeight: '100vh',
+            display: 'grid',
+            placeItems: 'center',
+            color: '#4568e8',
+            fontWeight: 600,
+          }}
+        >
+          Đang xác thực phiên đăng nhập...
+        </div>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   )
 }

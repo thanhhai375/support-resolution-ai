@@ -1,6 +1,7 @@
 import { createBrowserRouter, Link, Navigate, Outlet } from 'react-router-dom'
 import type { RouteObject } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
+import RequireRole from './components/RequireRole'
 import { TicketsProvider, useTickets } from './context/TicketsProvider'
 import MainLayout from './layouts/MainLayout'
 import Dashboard from './pages/Dashboard'
@@ -11,6 +12,7 @@ import Login from './pages/Login'
 import TicketDetail from './pages/TicketDetail'
 import Register from './pages/Register'
 import KnowledgeBase from './pages/KnowledgeBase'
+import UserManagement from './pages/UserManagement'
 
 function Workspace() {
   return <TicketsProvider><Outlet /></TicketsProvider>
@@ -44,9 +46,39 @@ export const routes: RouteObject[] = [
           { path: 'dashboard', element: <DashboardRoute /> },
           { path: 'tickets', element: <TicketFeedRoute /> },
           { path: 'tickets/:ticketId', element: <TicketDetail /> },
-          { path: 'knowledge-base', element: <KnowledgeBase /> },
-          { path: 'ai-settings', element: <AISettings /> },
-          { path: 'analytics', element: <Analytics /> },
+          {
+            path: 'knowledge-base',
+            element: (
+              <RequireRole allowedRoles={['STAFF', 'ENGINEER', 'MANAGER', 'ADMIN']}>
+                <KnowledgeBase />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'ai-settings',
+            element: (
+              <RequireRole allowedRoles={['MANAGER', 'ADMIN']}>
+                <AISettings />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'analytics',
+            element: (
+              <RequireRole allowedRoles={['MANAGER', 'ADMIN']}>
+                <Analytics />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'user-management',
+            element: (
+              <RequireRole allowedRoles={['ADMIN']}>
+                <UserManagement />
+              </RequireRole>
+            ),
+          },
+
           { path: '*', element: <NotFound /> },
         ],
       }],

@@ -3,10 +3,40 @@ import { DEMO_AUTH_ENABLED } from './demo'
 
 export const TOKEN_KEY = 'access_token'
 
+
+export type UserRole = 'STAFF' | 'ENGINEER' | 'MANAGER' | 'ADMIN'
+
+export function normalizeRole(value: unknown): UserRole | null {
+  if (typeof value !== 'string') return null
+
+  switch (value.trim().toUpperCase()) {
+    case 'STAFF':
+    case 'SUPPORT_AGENT':
+      return 'STAFF'
+
+    case 'ENGINEER':
+    case 'TECHNICAL_APPROVER':
+      return 'ENGINEER'
+
+    case 'MANAGER':
+    case 'KNOWLEDGE_STEWARD':
+      return 'MANAGER'
+
+    case 'ADMIN':
+    case 'ADMINISTRATOR':
+      return 'ADMIN'
+
+    default:
+      return null
+  }
+}
+
 export interface JwtClaims {
   sub: string
   exp: number
   name?: string
+  role: UserRole | null
+  demo?: boolean
 }
 
 // Chỉ kiểm tra cấu trúc và thời hạn JWT phía client.
@@ -78,14 +108,19 @@ export function readClaims(
       return null
     }
 
-    return {
-      sub: value.sub,
-      exp: value.exp,
-      name:
-        typeof value.name === 'string'
-          ? value.name
-          : undefined,
-    }
+const role = normalizeRole(value.role)
+
+return {
+  sub: value.sub,
+  exp: value.exp,
+  name:
+    typeof value.name === 'string'
+      ? value.name
+      : undefined,
+  role,
+  demo: value.demo === true,
+}
+
   } catch {
     return null
   }

@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import TicketLiveFeedTable from '../components/TicketLiveFeedTable'
 import type { Ticket, TicketPriority } from '../types/ticket'
 import type { CreateTicketInput } from '../services/ticketService'
+import { ShieldCheck, ShieldAlert, AlertCircle } from 'lucide-react'
 
 interface TicketListProps {
   tickets: Ticket[]
@@ -59,8 +60,37 @@ useEffect(() => {
 }, [])
 
   const sortedTickets = useMemo(() => [...tickets].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [tickets])
+  const hasDraft =
+    title.trim() !== '' ||
+    customerName.trim() !== '' ||
+    description.trim() !== '' ||
+    productId !== '' ||
+    categoryId !== '' ||
+    priority !== 'MEDIUM' ||
+    isHazardEscalated ||
+    hazardReason.trim() !== ''
 
-  
+  function closeCreateModal() {
+    if (hasDraft) {
+      const confirmed = window.confirm(
+        'Bạn có thông tin ticket chưa lưu.\n\n' +
+        'Bạn có chắc muốn đóng và bỏ các thông tin đã nhập?'
+      )
+
+      if (!confirmed) return
+    }
+
+    setTitle('')
+    setCustomerName('')
+    setDescription('')
+    setPriority('MEDIUM')
+    setProductId('')
+    setCategoryId('')
+    setIsHazardEscalated(false)
+    setHazardReason('')
+    setCreating(false)
+  }
+
 async function submitCreate(event: FormEvent<HTMLFormElement>) {
   event.preventDefault()
 
@@ -115,11 +145,22 @@ async function submitCreate(event: FormEvent<HTMLFormElement>) {
         <button className="primary-button" onClick={() => setCreating(true)}>＋ Tạo ticket</button>
       </div>
       <TicketLiveFeedTable tickets={sortedTickets} loading={loading} onSelect={ticket => navigate(`/tickets/${encodeURIComponent(ticket.id)}`)} />
-
-      {creating && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setCreating(false) }}>
-        <form className="dialog-card ticket-form" onSubmit={submitCreate}>
-          <div className="dialog-heading"><div><span className="dialog-kicker">QUẢN LÝ YÊU CẦU</span><h2>Tạo ticket mới</h2></div><button type="button" className="icon-close" onClick={() => setCreating(false)} aria-label="Đóng">×</button></div>
-          <label className="field-label">Tiêu đề ticket<input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="Ví dụ: Không thể đăng nhập..." /></label>
+      {creating && <div className="modal-backdrop" onMouseDown={e => {
+        if (e.target === e.currentTarget) closeCreateModal()
+            }}>
+            <form
+              className="dialog-card ticket-form"
+              onSubmit={submitCreate}
+              onKeyDown={e => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  closeCreateModal()
+                }
+              }}
+            >
+          <div className="dialog-heading"><div><span className="dialog-kicker">QUẢN LÝ YÊU CẦU</span><h2>Tạo ticket mới</h2></div><button type="button" className="icon-close" onClick={closeCreateModal} aria-label="Đóng">×</button></div>
+          <label className="field-label ticket-field-full">Tiêu đề ticket<input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="Ví dụ: Không thể đăng nhập..." /></label>
           <label className="field-label">Tên khách hàng<input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Nhập tên khách hàng" /></label>
           <label className="field-label">
             Sản phẩm
@@ -155,10 +196,28 @@ async function submitCreate(event: FormEvent<HTMLFormElement>) {
             </select>
           </label>
           <label className="field-label">Mức độ ưu tiên<select value={priority} onChange={e => setPriority(e.target.value as TicketPriority)}><option value="LOW">Thấp</option><option value="MEDIUM">Trung bình</option><option value="HIGH">Cao</option><option value="URGENT">Khẩn cấp</option></select></label>
-          <label className="field-label">Mô tả<textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Mô tả vấn đề khách hàng đang gặp..." rows={3} /></label>
-          <label className="field-label">
-                Nhãn an toàn
-                <select
+         <label className="field-label ticket-field-full">Mô tả<textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Mô tả vấn đề khách hàng đang gặp..." rows={3} /></label>
+          <label
+            className={`field-label ticket-field-full ticket-safety-field ${
+              isHazardEscalated ? 'is-alert' : 'is-normal'
+            }`}
+          >
+            <span className="ticket-safety-heading">
+              <span>Nhãn an toàn</span>
+
+              <span className="ticket-safety-indicator">
+                {isHazardEscalated ? (
+                  <ShieldAlert size={17} aria-hidden="true" />
+                ) : (
+                  <ShieldCheck size={17} aria-hidden="true" />
+                )}
+
+                {isHazardEscalated
+                  ? 'Có cảnh báo'
+                  : 'Không có cảnh báo'}
+              </span>
+            </span>
+            <select
                   value={isHazardEscalated ? 'true' : 'false'}
                   onChange={e => {
                     const checked = e.target.value === 'true'
@@ -172,7 +231,7 @@ async function submitCreate(event: FormEvent<HTMLFormElement>) {
               </label>
 
               {isHazardEscalated && (
-                <label className="field-label">
+                <label className="field-label ticket-field-full">
                   Lý do cảnh báo an toàn
                   <textarea
                     value={hazardReason}
@@ -183,9 +242,26 @@ async function submitCreate(event: FormEvent<HTMLFormElement>) {
                   />
                 </label>
               )}
-          {formError && <p className="form-error" role="alert">{formError}</p>}
-          <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setCreating(false)}>Hủy</button><button className="primary-button" type="submit">Tạo ticket</button></div>
-        </form>
+            {formError && (
+              <div className="form-error ticket-form-error" role="alert">
+                <AlertCircle size={20} aria-hidden="true" />
+
+                <div>
+                  <strong>Có lỗi xảy ra</strong>
+                  <p>{formError}</p>
+                </div>
+              </div>
+            )}
+          <div className="form-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={closeCreateModal}
+          >
+            Hủy
+          </button>
+          </div>
+          </form>
       </div>}
     </>
   )

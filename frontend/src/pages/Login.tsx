@@ -8,7 +8,6 @@ import {
 } from 'react-router-dom'
 
 import { useAuth } from '../auth/AuthProvider'
-import { readClaims } from '../auth/token'
 import AuthLayout from '../layouts/AuthLayout'
 
 import {
@@ -23,7 +22,7 @@ import { validateLogin } from '../utils/loginValidation'
 import type { LoginFormErrors } from '../utils/loginValidation'
 
 export default function Login() {
-  const { token, signIn } = useAuth()
+  const { token, role, signIn } = useAuth()
   const location = useLocation()
 
   const registeredEmail: unknown = (
@@ -60,9 +59,9 @@ export default function Login() {
       ? from
       : '/dashboard'
 
-  if (readClaims(token)) {
-    return <Navigate to={destination} replace />
-  }
+  if (token && role) {
+  return <Navigate to={destination} replace />
+}
 
   async function submit(
     event: FormEvent<HTMLFormElement>
@@ -91,7 +90,7 @@ export default function Login() {
         password,
       })
 
-      signIn(response.access_token)
+      await signIn(response.access_token)
     } catch (cause) {
       setError(
         cause instanceof Error

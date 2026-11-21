@@ -8,5 +8,13 @@ export function createDemoToken(email: string, password: string): string {
     throw new Error('Email hoặc mật khẩu demo không đúng.')
   }
   const encode = (value: object) => btoa(JSON.stringify(value)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: DEMO_EMAIL, name: 'Demo Admin', exp: Math.floor(Date.now() / 1000) + 3600, demo: true })}.local-demo`
+
+return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({
+  sub: DEMO_EMAIL,
+  name: 'Demo Admin',
+  role: 'ADMIN',
+  exp: Math.floor(Date.now() / 1000) + 3600,
+  demo: true,
+})}.local-demo`
+
 }

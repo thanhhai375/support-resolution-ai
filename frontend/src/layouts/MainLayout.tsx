@@ -1,20 +1,65 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { BookOpen, LayoutDashboard, BarChart3, Settings, LogOut, Menu, Search, Ticket as TicketIcon, X } from 'lucide-react'
+import { BookOpen, LayoutDashboard, BarChart3, Settings, Users, LogOut, Menu, Search, Ticket as TicketIcon, X } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider'
 import { readClaims } from '../auth/token'
 import { useTickets } from '../context/TicketsProvider'
 
+
+const roleLabels = {
+  STAFF: 'Nhân viên hỗ trợ',
+  ENGINEER: 'Kỹ sư',
+  MANAGER: 'Quản lý',
+  ADMIN: 'Quản trị viên',
+}
 const navigation = [
-  { to: '/dashboard', label: 'Tổng quan', accessibleLabel: 'Live Dashboard', icon: LayoutDashboard },
-  { to: '/tickets', label: 'Danh sách ticket', accessibleLabel: 'Ticket Feed', icon: TicketIcon },
-  { to: '/knowledge-base', label: 'Thư viện tài liệu', accessibleLabel: 'Knowledge Base', icon: BookOpen },
-  { to: '/analytics', label: 'Báo cáo & Thống kê', accessibleLabel: 'Analytics', icon: BarChart3 },
-  { to: '/ai-settings', label: 'AI Settings', accessibleLabel: 'AI Settings', icon: Settings },
+  {
+    to: '/dashboard',
+    label: 'Tổng quan',
+    accessibleLabel: 'Live Dashboard',
+    icon: LayoutDashboard,
+    roles: ['STAFF', 'ENGINEER', 'MANAGER', 'ADMIN'],
+  },
+  {
+    to: '/tickets',
+    label: 'Danh sách ticket',
+    accessibleLabel: 'Ticket Feed',
+    icon: TicketIcon,
+    roles: ['STAFF', 'ENGINEER', 'MANAGER', 'ADMIN'],
+  },
+  {
+  to: '/knowledge-base',
+  label: 'Thư viện tài liệu',
+  accessibleLabel: 'Knowledge Base',
+  icon: BookOpen,
+  roles: ['STAFF', 'ENGINEER', 'MANAGER', 'ADMIN'],
+},
+  {
+    to: '/analytics',
+    label: 'Báo cáo & Thống kê',
+    accessibleLabel: 'Analytics',
+    icon: BarChart3,
+    roles: ['MANAGER', 'ADMIN'],
+  },
+    {
+    to: '/ai-settings',
+    label: 'AI Settings',
+    accessibleLabel: 'AI Settings',
+    icon: Settings,
+    roles: ['MANAGER', 'ADMIN'],
+  },
+  {
+    to: '/user-management',
+    label: 'Quản lý người dùng',
+    accessibleLabel: 'User Management',
+    icon: Users,
+    roles: ['ADMIN'],
+  },
 ]
 
+
 export default function MainLayout() {
-  const { token, signOut } = useAuth()
+  const { token, role, signOut } = useAuth()
   const { tickets, errorMessage, dataSource, notice, setNotice } = useTickets()
   const navigate = useNavigate()
   const location = useLocation()
@@ -77,13 +122,39 @@ export default function MainLayout() {
     }
   }, [menuOpen])
 
+
+  useEffect(() => {
+    const state = location.state as {
+      roleDenied?: boolean
+    } | null
+
+    if (state?.roleDenied) {
+      setNotice('Không có quyền truy cập trang này.')
+
+      navigate(
+        location.pathname + location.search + location.hash,
+        {
+          replace: true,
+          state: null,
+        }
+      )
+    }
+  }, [
+    location.pathname,
+    location.search,
+    location.hash,
+    location.state,
+    navigate,
+    setNotice,
+  ])
+
   return <div className={`app-shell crm-shell ${menuOpen ? 'menu-open' : ''}`}>
     <a className="skip-link" href="#main-content">Bỏ qua điều hướng</a>
     <header className="topbar">
       <button ref={menuButtonRef} className="mobile-menu-button" onClick={() => setMenuOpen(true)} aria-label="Mở menu điều hướng" aria-controls="main-sidebar" aria-expanded={menuOpen}><Menu size={21} aria-hidden="true" /></button>
       <Link className="brand" to="/dashboard" aria-label="Support AI – Dashboard">SONGNHAT</Link>
       <div className="top-search-wrap">
-        <label className="top-search"><Search size={18} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setSearch('') }} placeholder="Tìm kiếm ticket, người dùng…" aria-label="Tìm kiếm ticket hoặc người dùng" />{search && <button className="search-clear" onClick={() => setSearch('')} aria-label="Xóa tìm kiếm"><X size={16} /></button>}</label>
+        <label className="top-search"><Search size={18} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setSearch('') }} placeholder="Tìm mã ticket, tiêu đề, khách hàng..." aria-label="Tìm kiếm ticket hoặc người dùng" />{search && <button className="search-clear" onClick={() => setSearch('')} aria-label="Xóa tìm kiếm"><X size={16} /></button>}</label>
         {search.trim() && <div className="global-search-results">
           <div className="dropdown-eyebrow">KẾT QUẢ TÌM KIẾM</div>
           {results.length ? results.map(ticket => <button key={ticket.id} className="global-search-result" onClick={() => { navigate(`/tickets?search=${encodeURIComponent(ticket.id)}`); setSearch('') }}>
@@ -102,9 +173,25 @@ export default function MainLayout() {
     <aside ref={sidebarRef} id="main-sidebar" className="sidebar" aria-label="Workspace" role={menuOpen ? 'dialog' : undefined} aria-modal={menuOpen ? true : undefined}>
       <div className="sidebar-heading"><Link className="workspace-brand" to="/dashboard"><b>SN</b><span>SONGNHAT<small>Support Resolution AI</small></span></Link><button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Đóng menu"><X size={20} aria-hidden="true" /></button></div>
       <nav className="navigation" aria-label="Điều hướng chính">
-        {navigation.map(({ to, label, accessibleLabel, icon: Icon }) => <NavLink key={to} to={to} aria-label={accessibleLabel} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}><Icon size={16} aria-hidden="true" />{label}</NavLink>)}
+        {navigation
+          .filter(item => role !== null && item.roles.includes(role))
+          .map(({ to, label, accessibleLabel, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              aria-label={accessibleLabel}
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'active' : ''}`
+              }
+              onClick={() => setMenuOpen(false)}
+            >
+              <Icon size={16} aria-hidden="true" />
+              {label}
+            </NavLink>
+          ))}
       </nav>
-      <div className="sidebar-staff"><span className="staff-avatar">{avatar}</span><div><strong>{userName}</strong><small>Support Agent</small></div></div>
+
+      <div className="sidebar-staff"><span className="staff-avatar">{avatar}</span><div><strong>{userName}</strong><small>{role ? roleLabels[role] : 'Chưa xác định vai trò'}</small></div></div>
     </aside>
     {notice && <div className="toast-notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Đóng thông báo">×</button></div>}
     {showHelp && <div className="modal-backdrop"><section className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="help-title"><h2 id="help-title">Trung tâm trợ giúp</h2><p className="subtitle">Chọn Tổng quan để theo dõi hoạt động. Danh sách ticket cho phép tìm kiếm, lọc và mở chi tiết yêu cầu. Phân tích dữ liệu hiển thị các chỉ số hỗ trợ.</p><button autoFocus className="primary-button dialog-action" onClick={() => setShowHelp(false)}>Đóng</button></section></div>}
