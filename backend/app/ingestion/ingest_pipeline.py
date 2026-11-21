@@ -1,26 +1,28 @@
 """
-WP 02 Ingestion — Orchestrator
+WP 02 Ingestion — Orchestrator  (CRM-42: DB write integrated)
 
 Ties together:
   1. CSV loading from file path or raw content
   2. Validation (validator.py)
-  3. Quarantine persistence (quarantine_store.py)
-  4. Batch reporting
+  3. DB write for ACCEPTED rows (db_writer.write_accepted_rows)
+  4. DB write for QUARANTINED rows (db_writer.write_quarantine_rows)
+     → replaces JSONL file; falls back to QuarantineStore if DB unavailable
+  5. Batch reporting
 
 Usage (CLI / test):
     python -m app.ingestion.ingest_pipeline
 
 Usage (from code):
     from app.ingestion.ingest_pipeline import run_ingestion_batch
-    report = run_ingestion_batch("cases_and_events", Path("data/cases_and_events.csv"))
+    report, write_result = run_ingestion_batch(...)
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
+from app.ingestion.db_writer import WriteResult, write_batch_to_db
 from app.ingestion.quarantine_store import QuarantineStore
 from app.ingestion.validator import (
     BatchReport,
@@ -49,9 +51,14 @@ def run_ingestion_batch(
     registry: Optional[VersionRegistry] = None,
     quarantine_store: Optional[QuarantineStore] = None,
     batch_id: Optional[str] = None,
-) -> BatchReport:
+    write_to_db: bool = True,
+) -> Tuple[BatchReport, WriteResult]:
     """
-    Load a CSV file, validate all rows, quarantine failures, return report.
+    Load a CSV file, validate all rows, write to DB, return (report, write_result).
+
+    CRM-42: ACCEPTED rows → INSERT vào bảng tương ứng (knowledge_passages /
+    case_events / customer_product_links). QUARANTINED rows → import_quarantine.
+    Nếu DB không available, fallback sang JSONL QuarantineStore cho quarantine.
 
     Args:
         source_name:  one of 'cases_and_events', 'customer_product_links',
@@ -59,8 +66,9 @@ def run_ingestion_batch(
         csv_path:     absolute or relative path to the CSV file
         import_type:  'snapshot' | 'increment'
         registry:     version registry (defaults to global singleton)
-        quarantine_store: quarantine backend (defaults to global singleton)
+        quarantine_store: JSONL fallback quarantine backend
         batch_id:     override batch_id (defaults to filename stem)
+        write_to_db:  set False in unit tests to skip DB write
     """
     if source_name not in _VALIDATORS:
         raise ValueError(
@@ -82,11 +90,12 @@ def run_ingestion_batch(
         import_type=import_type,
     )
 
-    # Persist quarantined rows
-    q_store = quarantine_store or _QUARANTINE_STORE
-    written = q_store.persist_batch(report)
+    # --- CRM-42: DB write (ACCEPTED + QUARANTINED) ---
+    write_result = WriteResult(batch_id=report.batch_id, source_file=report.source_file)
+    if write_to_db:
+        write_result = write_batch_to_db(report)
 
-    return report
+    return report, write_result
 
 
 def print_report(report: BatchReport, verbose: bool = True) -> None:
@@ -141,23 +150,19 @@ if __name__ == "__main__":
     for source_name, csv_path in files:
         print(f"\n📂 Processing: {csv_path.name}")
         try:
-            report = run_ingestion_batch(source_name, csv_path, import_type="increment")
+            report, write_result = run_ingestion_batch(
+                source_name, csv_path, import_type="increment"
+            )
             print_report(report)
+            print(f"  💾 DB inserted : {write_result.inserted_rows}")
+            print(f"  🗄  DB quarantine: {write_result.quarantined_rows}")
+            if write_result.errors:
+                for e in write_result.errors:
+                    print(f"  ⚠ DB error: {e}")
             if not report.reconciliation_ok:
                 all_ok = False
         except Exception as exc:
             print(f"  ❌ FATAL: {exc}")
             all_ok = False
-
-    # Quarantine statistics
-    print("\n" + "=" * 65)
-    print("  QUARANTINE STORE STATISTICS")
-    print("=" * 65)
-    for source_name, csv_path in files:
-        stats = _QUARANTINE_STORE.statistics(csv_path.name)
-        print(f"\n  {csv_path.name}")
-        print(f"    Total quarantined ever: {stats['total_quarantined']}")
-        for reason, count in stats["by_reason"].items():
-            print(f"    {reason}: {count}")
 
     sys.exit(0 if all_ok else 1)
