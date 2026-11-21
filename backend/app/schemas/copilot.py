@@ -2,6 +2,7 @@
 
 from enum import Enum
 from typing import Any, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -32,6 +33,40 @@ class CitationItem(BaseModel):
         ...,
         description="Đoạn nội dung trích xuất làm bằng chứng kỹ thuật",
     )
+    section: Optional[str] = Field(
+        default=None,
+        description="Mục tài liệu hoặc chương trích dẫn (DAT 08)",
+        examples=["4.2 - Electrical Connection & Starting Troubleshooting"],
+    )
+    version: Optional[str] = Field(
+        default=None,
+        description="Phiên bản tài liệu kỹ thuật",
+        examples=["Rev. G (2025)"],
+    )
+    passage_id: Optional[str] = Field(
+        default=None,
+        description="Mã định danh đoạn trích dẫn trong cơ sở dữ liệu",
+    )
+    document_code: Optional[str] = Field(
+        default=None,
+        description="Mã hiệu tài liệu kỹ thuật",
+        examples=["3GZF500730-87"],
+    )
+    status: Optional[str] = Field(
+        default=None,
+        description="Trạng thái hiệu lực nguồn (current, draft, superseded, withdrawn)",
+        examples=["current"],
+    )
+    product_model: Optional[str] = Field(
+        default=None,
+        description="Model sản phẩm áp dụng",
+        examples=["SD700"],
+    )
+    serial_range: Optional[str] = Field(
+        default=None,
+        description="Dải serial áp dụng",
+        examples=["SN1000-SN5000"],
+    )
 
 
 class CaseSummary(BaseModel):
@@ -58,6 +93,20 @@ class CopilotAnalyzeRequest(BaseModel):
         ...,
         description="Nội dung tiêu đề hoặc mô tả sự cố kỹ thuật của ticket",
         examples=["Biến tần báo lỗi F0022 khi tăng tốc"],
+    )
+    ticket_id: Optional[UUID] = Field(
+        default=None,
+        description="Mã định danh ticket (nếu có để lưu kết quả vào CSDL)",
+    )
+    product_id: Optional[UUID] = Field(
+        default=None,
+        description="Mã định danh nhóm sản phẩm liên quan (Motors / Drives)",
+    )
+    limit: Optional[int] = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Số lượng trích dẫn tài liệu tối đa cần truy xuất",
     )
 
 
