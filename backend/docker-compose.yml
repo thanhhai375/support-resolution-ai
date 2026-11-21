@@ -1,15 +1,17 @@
 # ==================================================
-
-# SONGNHAT COPILOT
-
-# Local PostgreSQL Environment
-
 #
-
-# Run from backend directory:
-
-# docker compose up -d
-
+# SONGNHAT COPILOT — DB-only (dev convenience)
+#
+# This file starts ONLY the PostgreSQL database.
+# Use for local backend development without Docker.
+#
+# ⚠️  To start the FULL SYSTEM (DB + Backend + Frontend):
+#     cd ..  (project root)
+#     docker compose up -d
+#
+# Run only DB (from backend/ directory):
+#     docker compose up -d
+#
 # ==================================================
 
 

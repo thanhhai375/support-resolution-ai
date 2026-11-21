@@ -1,0 +1,23 @@
+# Dependencies (re-installed inside container)
+node_modules/
+
+# Vite build output
+dist/
+
+# Test artifacts
+tests/
+playwright-report/
+test-results/
+
+# IDE & OS
+.vscode/
+.idea/
+*.DS_Store
+
+# Secrets
+.env
+.env.local
+.env*.local
+
+# Docs
+*.md
