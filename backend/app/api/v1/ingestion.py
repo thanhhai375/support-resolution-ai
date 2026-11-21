@@ -3,7 +3,6 @@ WP 02 Ingestion — FastAPI Router  (DAT 01–03)
 
 Endpoints:
   POST /api/v1/ingestion/upload          Upload a CSV file → validate + quarantine
-  GET  /api/v1/ingestion/batches/{id}    Get batch report JSON
   GET  /api/v1/ingestion/quarantine      List quarantine entries (with filters)
   POST /api/v1/ingestion/tombstone       Record an explicit deletion (DAT 02)
   GET  /api/v1/ingestion/stats           Quarantine statistics
@@ -11,12 +10,14 @@ Endpoints:
 from __future__ import annotations
 
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Annotated, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
+from app.ingestion.db_writer import WriteResult
 from app.ingestion.ingest_pipeline import _GLOBAL_REGISTRY, _QUARANTINE_STORE, run_ingestion_batch
 from app.ingestion.quarantine_store import QuarantineStore
 from app.ingestion.validator import BatchReport, QuarantineReason
@@ -34,6 +35,9 @@ class UploadResponse(BaseModel):
     total_rows: int
     accepted: int
     quarantined: int
+    inserted_rows: int          # CRM-42: rows thực sự ghi vào DB
+    quarantined_rows: int       # CRM-42: rows ghi vào import_quarantine
+    db_available: bool          # CRM-42: False nếu DB không kết nối được
     reconciliation_ok: bool
     message: str
 
@@ -100,6 +104,8 @@ async def upload_csv(
     """
     source_name = _resolve_source(file.filename or "")
 
+    effective_batch_id = batch_id or f"batch_{uuid.uuid4().hex[:12]}"
+
     # Write upload to temp file so validator can read it
     content = await file.read()
 
@@ -110,23 +116,28 @@ async def upload_csv(
         tmp_path = Path(tmp.name)
 
     try:
-        report: BatchReport = run_ingestion_batch(
+        report, write_result = run_ingestion_batch(
             source_name=source_name,
             csv_path=tmp_path,
             import_type=import_type,
             registry=_GLOBAL_REGISTRY,
             quarantine_store=_QUARANTINE_STORE,
-            batch_id=batch_id,
+            batch_id=effective_batch_id,
         )
     finally:
         tmp_path.unlink(missing_ok=True)
 
     msg = (
-        f"Ingestion complete. {report.accepted} accepted, "
+        f"Ingestion complete. {report.accepted} accepted "
+        f"({write_result.inserted_rows} inserted to DB), "
         f"{report.quarantined} quarantined."
     )
     if not report.reconciliation_ok:
         msg += " ⚠ DAT 02 reconciliation FAILED."
+    if not write_result.db_available:
+        msg += " ⚠ DB unavailable – rows not persisted."
+    if write_result.errors:
+        msg += f" ⚠ DB write errors: {'; '.join(write_result.errors)}"
 
     return UploadResponse(
         batch_id=report.batch_id,
@@ -135,6 +146,9 @@ async def upload_csv(
         total_rows=report.total_rows,
         accepted=report.accepted,
         quarantined=report.quarantined,
+        inserted_rows=write_result.inserted_rows,
+        quarantined_rows=write_result.quarantined_rows,
+        db_available=write_result.db_available,
         reconciliation_ok=report.reconciliation_ok,
         message=msg,
     )
