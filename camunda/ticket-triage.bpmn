@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  id="Definitions_TicketTriage"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.20.0">
+  <bpmn:process id="ticket-triage" name="SongNhat Copilot Ticket Triage Workflow" isExecutable="true" camunda:historyTimeToLive="P30D">
+    <bpmn:startEvent id="StartEvent_TicketReceived" name="Tiếp nhận Ticket">
+      <bpmn:outgoing>Flow_StartToSafety</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_SafetyCheck" name="Phát hiện nguy hiểm khẩn cấp?" default="Flow_SafeToIntent">
+      <bpmn:incoming>Flow_StartToSafety</bpmn:incoming>
+      <bpmn:outgoing>Flow_HazardDetected</bpmn:outgoing>
+      <bpmn:outgoing>Flow_SafeToIntent</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:userTask id="Task_HazardEscalation" name="Chuyển khẩn cấp cho Kỹ sư An toàn (Escalate)">
+      <bpmn:incoming>Flow_HazardDetected</bpmn:incoming>
+      <bpmn:outgoing>Flow_HazardToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_HazardEscalated" name="Đã ngắt &amp; chuyển khẩn cấp">
+      <bpmn:incoming>Flow_HazardToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_IntentRouting" name="Phân loại Intent (3 luồng)" default="Flow_IntentTechEscalation">
+      <bpmn:incoming>Flow_SafeToIntent</bpmn:incoming>
+      <bpmn:outgoing>Flow_IntentDocRequest</bpmn:outgoing>
+      <bpmn:outgoing>Flow_IntentServiceProgress</bpmn:outgoing>
+      <bpmn:outgoing>Flow_IntentTechEscalation</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_DocumentRequest" name="Xử lý Yêu cầu Tài liệu (Document Request)" camunda:type="external" camunda:topic="triage.document_request">
+      <bpmn:incoming>Flow_IntentDocRequest</bpmn:incoming>
+      <bpmn:outgoing>Flow_DocToReview</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_ServiceProgress" name="Xử lý Tra cứu Tiến độ (Service Progress)" camunda:type="external" camunda:topic="triage.service_progress">
+      <bpmn:incoming>Flow_IntentServiceProgress</bpmn:incoming>
+      <bpmn:outgoing>Flow_ProgressToReview</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_TechnicalEscalation" name="Xử lý Chuyển cấp Kỹ thuật (Technical Escalation)" camunda:type="external" camunda:topic="triage.technical_escalation">
+      <bpmn:incoming>Flow_IntentTechEscalation</bpmn:incoming>
+      <bpmn:outgoing>Flow_TechToReview</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:userTask id="Task_HumanApproval" name="Nhân viên kỹ thuật duyệt / chỉnh sửa bản nháp">
+      <bpmn:incoming>Flow_DocToReview</bpmn:incoming>
+      <bpmn:incoming>Flow_ProgressToReview</bpmn:incoming>
+      <bpmn:incoming>Flow_TechToReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ReviewToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_TriageCompleted" name="Hoàn tất xử lý Ticket">
+      <bpmn:incoming>Flow_ReviewToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_StartToSafety" sourceRef="StartEvent_TicketReceived" targetRef="Gateway_SafetyCheck" />
+
+    <bpmn:sequenceFlow id="Flow_HazardDetected" name="Nguy hiểm" sourceRef="Gateway_SafetyCheck" targetRef="Task_HazardEscalation">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${is_hazard_escalated == true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_SafeToIntent" name="An toàn" sourceRef="Gateway_SafetyCheck" targetRef="Gateway_IntentRouting" />
+
+    <bpmn:sequenceFlow id="Flow_HazardToEnd" sourceRef="Task_HazardEscalation" targetRef="EndEvent_HazardEscalated" />
+
+    <bpmn:sequenceFlow id="Flow_IntentDocRequest" name="DOCUMENT_REQUEST" sourceRef="Gateway_IntentRouting" targetRef="Task_DocumentRequest">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${intent == 'DOCUMENT_REQUEST'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_IntentServiceProgress" name="SERVICE_PROGRESS" sourceRef="Gateway_IntentRouting" targetRef="Task_ServiceProgress">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${intent == 'SERVICE_PROGRESS'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_IntentTechEscalation" name="TECHNICAL_ESCALATION" sourceRef="Gateway_IntentRouting" targetRef="Task_TechnicalEscalation" />
+
+    <bpmn:sequenceFlow id="Flow_DocToReview" sourceRef="Task_DocumentRequest" targetRef="Task_HumanApproval" />
+    <bpmn:sequenceFlow id="Flow_ProgressToReview" sourceRef="Task_ServiceProgress" targetRef="Task_HumanApproval" />
+    <bpmn:sequenceFlow id="Flow_TechToReview" sourceRef="Task_TechnicalEscalation" targetRef="Task_HumanApproval" />
+    <bpmn:sequenceFlow id="Flow_ReviewToEnd" sourceRef="Task_HumanApproval" targetRef="EndEvent_TriageCompleted" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_TicketTriage">
+    <bpmndi:BPMNPlane id="BPMNPlane_TicketTriage" bpmnElement="ticket-triage">
+      <bpmndi:BPMNShape id="StartEvent_TicketReceived_di" bpmnElement="StartEvent_TicketReceived">
+        <dc:Bounds x="152" y="342" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="129" y="385" width="83" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Gateway_SafetyCheck_di" bpmnElement="Gateway_SafetyCheck" isMarkerVisible="true">
+        <dc:Bounds x="265" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="247" y="395" width="86" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_HazardEscalation_di" bpmnElement="Task_HazardEscalation">
+        <dc:Bounds x="410" y="60" width="170" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="EndEvent_HazardEscalated_di" bpmnElement="EndEvent_HazardEscalated">
+        <dc:Bounds x="662" y="82" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="636" y="125" width="88" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Gateway_IntentRouting_di" bpmnElement="Gateway_IntentRouting" isMarkerVisible="true">
+        <dc:Bounds x="435" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="416" y="395" width="88" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_DocumentRequest_di" bpmnElement="Task_DocumentRequest">
+        <dc:Bounds x="650" y="190" width="170" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_ServiceProgress_di" bpmnElement="Task_ServiceProgress">
+        <dc:Bounds x="650" y="320" width="170" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_TechnicalEscalation_di" bpmnElement="Task_TechnicalEscalation">
+        <dc:Bounds x="650" y="450" width="170" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_HumanApproval_di" bpmnElement="Task_HumanApproval">
+        <dc:Bounds x="930" y="320" width="170" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="EndEvent_TriageCompleted_di" bpmnElement="EndEvent_TriageCompleted">
+        <dc:Bounds x="1182" y="342" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1160" y="385" width="80" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_StartToSafety_di" bpmnElement="Flow_StartToSafety">
+        <di:waypoint x="188" y="360" />
+        <di:waypoint x="265" y="360" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_HazardDetected_di" bpmnElement="Flow_HazardDetected">
+        <di:waypoint x="290" y="335" />
+        <di:waypoint x="290" y="100" />
+        <di:waypoint x="410" y="100" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="298" y="195" width="54" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_HazardToEnd_di" bpmnElement="Flow_HazardToEnd">
+        <di:waypoint x="580" y="100" />
+        <di:waypoint x="662" y="100" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_SafeToIntent_di" bpmnElement="Flow_SafeToIntent">
+        <di:waypoint x="315" y="360" />
+        <di:waypoint x="435" y="360" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="356" y="342" width="38" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_IntentDocRequest_di" bpmnElement="Flow_IntentDocRequest">
+        <di:waypoint x="460" y="335" />
+        <di:waypoint x="460" y="230" />
+        <di:waypoint x="650" y="230" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="495" y="212" width="122" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_IntentServiceProgress_di" bpmnElement="Flow_IntentServiceProgress">
+        <di:waypoint x="485" y="360" />
+        <di:waypoint x="650" y="360" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="508" y="342" width="114" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_IntentTechEscalation_di" bpmnElement="Flow_IntentTechEscalation">
+        <di:waypoint x="460" y="385" />
+        <di:waypoint x="460" y="490" />
+        <di:waypoint x="650" y="490" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="490" y="472" width="136" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_DocToReview_di" bpmnElement="Flow_DocToReview">
+        <di:waypoint x="820" y="230" />
+        <di:waypoint x="875" y="230" />
+        <di:waypoint x="875" y="360" />
+        <di:waypoint x="930" y="360" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ProgressToReview_di" bpmnElement="Flow_ProgressToReview">
+        <di:waypoint x="820" y="360" />
+        <di:waypoint x="930" y="360" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_TechToReview_di" bpmnElement="Flow_TechToReview">
+        <di:waypoint x="820" y="490" />
+        <di:waypoint x="875" y="490" />
+        <di:waypoint x="875" y="360" />
+        <di:waypoint x="930" y="360" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ReviewToEnd_di" bpmnElement="Flow_ReviewToEnd">
+        <di:waypoint x="1100" y="360" />
+        <di:waypoint x="1182" y="360" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
