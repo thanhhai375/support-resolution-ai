@@ -19,4 +19,10 @@
 .crm30-approve:disabled { opacity: .5; cursor: not-allowed; }
 .crm30-reject-box { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid #f0cccc; border-radius: 10px; background: #fffafa; }
 .crm30-reason { overflow-wrap: anywhere; font-size: 12px; color: #8d3939; }
-.crm30-message { margin: 0; font-size: 12px; color: #244f81; line-height: 1.55; }
+.crm30-message { margin: 0; font-size: 12px; color: #244f81; line-height: 1.55; }.copilot-citations { display: grid; gap: 8px; }
+.copilot-citations button { text-align: left; overflow-wrap: anywhere; }
+.copilot-reject-dialog { width: min(480px, calc(100vw - 32px)); border: 0; border-radius: 16px; padding: 24px; }
+.copilot-reject-dialog::backdrop { background: #101a3b88; }
+.copilot-reject-dialog form { display: grid; gap: 16px; }
+.copilot-reject-dialog textarea { width: 100%; min-height: 120px; border: 1px solid #cbd5e1; padding: 12px; border-radius: 8px; }
+.crm30-review button:disabled { opacity: .5; cursor: not-allowed; }
