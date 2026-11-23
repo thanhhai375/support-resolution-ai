@@ -12,6 +12,7 @@ pytest>=8.0
 # Database & Migrations
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.29
+psycopg2-binary>=2.9    # CRM-42: sync DB write in ingestion pipeline
 greenlet>=3.0
 aiosqlite
 alembic

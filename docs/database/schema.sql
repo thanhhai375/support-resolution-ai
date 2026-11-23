@@ -271,7 +271,203 @@ CREATE TABLE IF NOT EXISTS copilot_packages (
 
 
 -- ============================================================
--- 7. INDEXES
+-- 7. TABLE: run_ingestion_batches   (CRM-42)
+-- Audit: 1 bản ghi cho mỗi lần upload CSV
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS run_ingestion_batches (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    batch_id         VARCHAR(255) NOT NULL,
+    source_file      VARCHAR(255) NOT NULL,
+    import_type      VARCHAR(20)  NOT NULL DEFAULT 'increment',
+
+    started_at       TIMESTAMPTZ NOT NULL,
+    finished_at      TIMESTAMPTZ,
+
+    total_rows       INTEGER NOT NULL DEFAULT 0,
+    accepted_rows    INTEGER NOT NULL DEFAULT 0,
+    quarantined_rows INTEGER NOT NULL DEFAULT 0,
+    inserted_rows    INTEGER NOT NULL DEFAULT 0,
+    reconciliation_ok BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_ingestion_batch UNIQUE (batch_id, source_file),
+    CONSTRAINT chk_ingestion_import_type
+        CHECK (import_type IN ('snapshot', 'increment', 'tombstone'))
+);
+
+COMMENT ON TABLE run_ingestion_batches IS
+'CRM-42: audit trail – 1 row per CSV upload batch.';
+
+
+-- ============================================================
+-- 8. TABLE: import_quarantine   (CRM-42)
+-- Thay thế JSONL file — quarantined rows ghi vào DB
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS import_quarantine (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    batch_id         VARCHAR(255) NOT NULL,
+    source_file      VARCHAR(255) NOT NULL,
+    import_type      VARCHAR(20)  NOT NULL DEFAULT 'increment',
+
+    row_index        INTEGER      NOT NULL,
+    source_key       VARCHAR(255) NOT NULL,
+    quarantine_reason VARCHAR(50) NOT NULL,
+
+    errors           JSONB        NOT NULL DEFAULT '[]'::JSONB,
+    raw_row          JSONB        NOT NULL DEFAULT '{}'::JSONB,
+
+    quarantined_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Tombstone fields (DAT 02 explicit deletion)
+    tombstone_reason VARCHAR(500),
+    authorized_by    VARCHAR(150),
+    is_tombstone     BOOLEAN     NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT uq_quarantine_entry UNIQUE (batch_id, source_file, row_index),
+
+    CONSTRAINT chk_quarantine_reason
+        CHECK (quarantine_reason IN (
+            'SCHEMA_VIOLATION', 'MISSING_REQUIRED_FIELD',
+            'STALE_VERSION', 'DUPLICATE_KEY',
+            'IDENTITY_CONFLICT', 'INVALID_PROVENANCE',
+            'TOMBSTONE', 'UNKNOWN'
+        ))
+);
+
+CREATE INDEX IF NOT EXISTS idx_quarantine_source_file
+    ON import_quarantine(source_file);
+
+CREATE INDEX IF NOT EXISTS idx_quarantine_batch_id
+    ON import_quarantine(batch_id, source_file);
+
+CREATE INDEX IF NOT EXISTS idx_quarantine_source_key
+    ON import_quarantine(source_key);
+
+CREATE INDEX IF NOT EXISTS idx_quarantine_reason
+    ON import_quarantine(quarantine_reason);
+
+COMMENT ON TABLE import_quarantine IS
+'CRM-42: quarantined rows từ CSV ingestion – thay thế JSONL file, append-only audit.';
+
+
+-- ============================================================
+-- 9. TABLE: case_events   (CRM-42)
+-- Hàng ACCEPTED từ cases_and_events.csv
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS case_events (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    event_id           VARCHAR(100) NOT NULL,
+    case_key           VARCHAR(100) NOT NULL,
+    account_key        VARCHAR(100) NOT NULL,
+    product_code       VARCHAR(50)  NOT NULL,
+    serial_number      VARCHAR(150),
+    event_author_role  VARCHAR(50)  NOT NULL,
+    original_text      TEXT         NOT NULL,
+    event_time         TIMESTAMPTZ  NOT NULL,
+    is_customer_report BOOLEAN      NOT NULL DEFAULT FALSE,
+
+    -- DAT 01 Provenance
+    batch_id           VARCHAR(255) NOT NULL,
+    record_version     INTEGER      NOT NULL DEFAULT 1,
+    owner              VARCHAR(150) NOT NULL,
+    access_label       VARCHAR(20)  NOT NULL DEFAULT 'INTERNAL',
+    permitted_audience TEXT         NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_case_event_id UNIQUE (event_id),
+    CONSTRAINT chk_case_event_product
+        CHECK (product_code IN ('MOTORS', 'DRIVES')),
+    CONSTRAINT chk_case_event_access_label
+        CHECK (access_label IN ('INTERNAL', 'RESTRICTED', 'PUBLIC'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_events_case_key
+    ON case_events(case_key);
+CREATE INDEX IF NOT EXISTS idx_case_events_account_key
+    ON case_events(account_key);
+CREATE INDEX IF NOT EXISTS idx_case_events_product_code
+    ON case_events(product_code);
+
+COMMENT ON TABLE case_events IS
+'CRM-42: validated ACCEPTED rows từ cases_and_events.csv ingestion.';
+
+
+-- ============================================================
+-- 10. TABLE: customer_product_links   (CRM-42)
+-- Hàng ACCEPTED từ customer_product_links.csv
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS customer_product_links (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    link_id          VARCHAR(100) NOT NULL,
+    account_key      VARCHAR(100),
+    product_code     VARCHAR(50)  NOT NULL,
+    serial_number    VARCHAR(150),
+    link_status      VARCHAR(20)  NOT NULL,
+    confidence_score NUMERIC(4,3) NOT NULL,
+    link_source      VARCHAR(100) NOT NULL,
+    confirmed_by     VARCHAR(150),
+    confirmed_at     TIMESTAMPTZ,
+    conflict_note    TEXT,
+
+    -- DAT 01 Provenance
+    batch_id           VARCHAR(255) NOT NULL,
+    record_version     INTEGER      NOT NULL DEFAULT 1,
+    owner              VARCHAR(150) NOT NULL,
+    access_label       VARCHAR(20)  NOT NULL DEFAULT 'INTERNAL',
+    permitted_audience TEXT         NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_customer_product_link_id UNIQUE (link_id),
+    CONSTRAINT chk_cpl_product
+        CHECK (product_code IN ('MOTORS', 'DRIVES')),
+    CONSTRAINT chk_cpl_link_status
+        CHECK (link_status IN ('approved', 'pending_review', 'conflicted', 'rejected')),
+    CONSTRAINT chk_cpl_access_label
+        CHECK (access_label IN ('INTERNAL', 'RESTRICTED', 'PUBLIC'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpl_account_key
+    ON customer_product_links(account_key);
+CREATE INDEX IF NOT EXISTS idx_cpl_link_status
+    ON customer_product_links(link_status);
+
+COMMENT ON TABLE customer_product_links IS
+'CRM-42: validated ACCEPTED rows từ customer_product_links.csv ingestion.';
+
+
+-- ============================================================
+-- 11. UNIQUE CONSTRAINT on knowledge_passages (CRM-42 idempotent upsert)
+-- ============================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_knowledge_passage_identity'
+    ) THEN
+        ALTER TABLE knowledge_passages
+            ADD CONSTRAINT uq_knowledge_passage_identity
+                UNIQUE NULLS NOT DISTINCT (document_code, section_number, page_number, product_id);
+    END IF;
+END $$;
+
+
+-- ============================================================
+-- 12. INDEXES
 -- Tối ưu hiệu suất truy vấn
 -- ============================================================
 
@@ -326,7 +522,7 @@ CREATE INDEX IF NOT EXISTS idx_copilot_citations
 
 
 -- ============================================================
--- 8. COMMENTS
+-- 13. COMMENTS
 -- Mô tả các bảng và trường dữ liệu
 -- ============================================================
 
@@ -365,7 +561,7 @@ COMMENT ON COLUMN copilot_packages.citations IS
 
 
 -- ============================================================
--- 9. VERIFY DATABASE
+-- 14. VERIFY DATABASE
 -- Kiểm tra dữ liệu khởi tạo
 -- ============================================================
 
@@ -383,7 +579,11 @@ AND table_name IN (
     'categories',
     'knowledge_passages',
     'tickets',
-    'copilot_packages'
+    'copilot_packages',
+    'run_ingestion_batches',
+    'import_quarantine',
+    'case_events',
+    'customer_product_links'
 )
 ORDER BY table_name;
 
