@@ -1,7 +1,4 @@
 import ReviewApprovalPanel from '../components/ReviewApprovalPanel'
-import SourceViewer from '../components/SourceViewer'
-import { knowledgeExcerpts } from '../data/knowledge'
-import type { KnowledgeExcerpt } from '../data/knowledge'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -35,7 +32,6 @@ export default function TicketDetail() {
   const [reply, setReply] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [checkedFacts, setCheckedFacts] = useState<string[]>([])
-const [selectedEvidence, setSelectedEvidence] = useState<KnowledgeExcerpt | null>(null)
 
 const missingFacts = [
   'Model thiết bị',
@@ -54,7 +50,6 @@ function toggleFact(fact: string) {
   if (loading) return <p role="status">Đang tải ticket…</p>
   if (!ticket) return <section className="panel"><h1>Không tìm thấy ticket</h1><Link to="/tickets" className="text-link">Về danh sách ticket</Link></section>
   const replies = ticket.replies ?? []
-  const evidenceItems = knowledgeExcerpts.filter(item => item.productLine === (/drive|biến tần/i.test(ticket.device) ? 'Drives' : 'Motors')).slice(0, 2)
 
   function sendReply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -121,22 +116,7 @@ return <>
         </div>
       </section>
 
-      <section className="evidence-panel">
-        <h2>Bằng chứng và tài liệu nguồn (Citations)</h2>
-        <p className="subtitle">Citation minh họa từ kho tri thức mẫu; chưa liên kết bằng chứng thực tế của ticket.</p>
-        {evidenceItems.map(item => (
-          <article className="evidence-card" key={item.id}>
-            <div>
-              <strong>
-                [{item.id}] {item.title} — Trang {item.page}
-              </strong>
-              <p>{item.content}</p>
-            </div>
 
-            <button className="evidence-source-button" onClick={() => setSelectedEvidence(item)}>Xem tài liệu nguồn {item.id}</button>
-          </article>
-        ))}
-      </section>
 
       <section className="missing-facts-panel">
         <h2>Thông tin cần xác minh</h2>
@@ -174,7 +154,7 @@ return <>
     </div>
 
     <aside className="ticket-detail-side">
-      <ReviewApprovalPanel ticket={ticket} />
+      <ReviewApprovalPanel key={ticket.id} ticket={ticket} />
       
       <section className="panel ticket-info">
         <h2>Thông tin ticket</h2>
@@ -248,7 +228,6 @@ return <>
     </aside>
   </div>
 
-  <SourceViewer excerpt={selectedEvidence} onClose={() => setSelectedEvidence(null)} />
   <div className="detail-footer">
     <span>Phản hồi và cập nhật được lưu trên trình duyệt này.</span>
     {confirmDelete ? (

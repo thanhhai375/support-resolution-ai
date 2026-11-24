@@ -72,3 +72,37 @@ test('knowledge search, product filters, pagination and source viewer', async ({
   await expect(page.getByRole('heading', { name: 'Kho tri thức kỹ thuật' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 })
+
+for (const role of ['ENGINEER', 'MANAGER', 'STAFF', 'ADMIN']) {
+  test(`copilot draft permissions and review flow: ${role}`, async ({ page }) => {
+    await page.addInitScript(role => {
+      const encode = (v: object) => btoa(JSON.stringify(v)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+      localStorage.setItem('access_token', `${encode({alg:'none'})}.${encode({sub:'test@example.com',role,demo:true,exp:Math.floor(Date.now()/1000)+3600})}.demo`)
+    }, role)
+    await page.goto('/tickets/TK-1024')
+    const panel = page.locator('.crm30-review')
+    await expect(panel.getByRole('status')).toHaveText('PENDING')
+    await expect(panel.getByRole('button', { name: 'Xuất PDF' })).toHaveCount(0)
+    await panel.getByRole('button', { name: /Xem tài liệu nguồn/ }).first().click()
+    await expect(page.getByRole('dialog')).toContainText('KB-001')
+    await page.keyboard.press('Escape')
+    if (role === 'STAFF' || role === 'ADMIN') {
+      await expect(panel.getByRole('button', { name: 'Phê duyệt', exact: true })).toHaveCount(0)
+      await expect(panel.getByRole('textbox')).toHaveAttribute('readonly', '')
+      return
+    }
+    await panel.getByRole('button', { name: 'Từ chối', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByRole('button', { name: 'Xác nhận từ chối' })).toBeDisabled()
+    await dialog.getByLabel('Lý do từ chối').fill('Cần xác minh model')
+    await dialog.getByRole('button', { name: 'Xác nhận từ chối' }).click()
+    await expect(panel.getByRole('status')).toHaveText('REJECTED')
+    await expect(panel).toContainText('Cần xác minh model')
+    await panel.getByRole('textbox').fill('Phản hồi đã chỉnh sửa')
+    await panel.getByRole('button', { name: 'Phê duyệt', exact: true }).click()
+    await expect(panel.getByRole('status')).toHaveText('APPROVED')
+    await expect(panel.getByRole('button', { name: 'Xuất PDF' })).toBeVisible()
+    await expect(panel.getByRole('textbox')).toHaveValue('Phản hồi đã chỉnh sửa')
+    await expect(panel.getByRole('textbox')).toHaveAttribute('readonly', '')
+  })
+}

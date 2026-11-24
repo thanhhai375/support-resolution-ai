@@ -1,131 +1,118 @@
-import { useEffect, useState } from 'react'
+import { createDemoToken, DEMO_EMAIL, DEMO_PASSWORD } from '../auth/demo'
+import type { UserRole } from '../auth/token'
+import { useEffect, useRef, useState } from 'react'
 import type { Ticket } from '../types/ticket'
-import './ReviewApprovalPanel.css'
 import { useAuth } from '../auth/AuthProvider'
+import { exportCopilotPdf, getCopilot, isCopilotDemo, reviewCopilot, type CopilotDraft } from '../services/copilotService'
+import SourceViewer from './SourceViewer'
+import type { KnowledgeExcerpt } from '../data/knowledge'
+import './ReviewApprovalPanel.css'
 
-type ReviewStatus = 'pending' | 'approved' | 'rejected'
-
-/** CRM-30: FE-only review UI. No approval/rejection API is invoked. */
 export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
-  const { role } = useAuth()
-
-  const canReview =
-    role === 'ENGINEER' || role === 'MANAGER'
+  const { role, token, signIn } = useAuth()
+  const canReview = role === 'ENGINEER' || role === 'MANAGER'
+  const [data, setData] = useState<CopilotDraft | null>(null)
   const [draft, setDraft] = useState('')
-  const [status, setStatus] = useState<ReviewStatus>('pending')
-  const [rejectReason, setRejectReason] = useState('')
-  const [showReject, setShowReject] = useState(false)
-  const [message, setMessage] = useState('')
-
-  // Each ticket starts from its own illustrative text, not an AI/backend response.
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [retry, setRetry] = useState(0)
+  const [reason, setReason] = useState('')
+  const [selected, setSelected] = useState<KnowledgeExcerpt | null>(null)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const rejectButton = useRef<HTMLButtonElement>(null)
+  const version = useRef(0)
   useEffect(() => {
-    setDraft(`Kính gửi ${ticket.customerName},\n\nChúng tôi đã tiếp nhận yêu cầu hỗ trợ về "${ticket.title}". Nhân viên phụ trách sẽ kiểm tra và liên hệ để trao đổi thêm thông tin.\n\nTrân trọng,\nBộ phận hỗ trợ khách hàng`)
-    setStatus('pending')
-    setRejectReason('')
-    setShowReject(false)
-    setMessage('')
-  }, [ticket.id, ticket.title, ticket.customerName])
+    const request = ++version.current
+    setLoading(true); setBusy(false); setData(null); setError(''); setSelected(null); setReason('')
+    dialog.current?.close()
+    getCopilot(ticket, token).then(value => {
+      if (request === version.current) { setData(value); setDraft(value.draft) }
+    }).catch(() => {
+      if (request === version.current) setError('Không thể tải bản nháp. API có thể chưa sẵn sàng. Vui lòng thử lại.')
+    }).finally(() => { if (request === version.current) setLoading(false) })
+    return () => { version.current++ }
+  }, [ticket.id, token, retry]) // Reload only when the ticket/session changes.
 
-  function handleEdit(value: string) {
-    if (!canReview) return
-    setDraft(value)
-    setStatus('pending')
-    setMessage('')
+  async function review(action: 'approve' | 'reject') {
+    if (!data || busy || !canReview || !draft.trim() || (action === 'reject' && !reason.trim())) return
+    const request = version.current
+    setBusy(true); setError('')
+    try {
+      const updated = await reviewCopilot(ticket.id, token, data, action, draft.trim(), reason.trim())
+      if (request !== version.current) return
+      setData(updated); setDraft(updated.draft)
+      dialog.current?.close(); rejectButton.current?.focus()
+    } catch (cause) {
+      if (request === version.current) setError(cause instanceof Error ? cause.message : 'Không thể cập nhật phê duyệt.')
+    } finally { if (request === version.current) setBusy(false) }
   }
-
-  function approveAndExport() {
-    if (!canReview) return
-    const customerText = draft.trim()
-    if (!customerText) {
-      setMessage('Vui lòng nhập nội dung phản hồi khách hàng trước khi duyệt.')
-      return
-    }
-
-    // Export ONLY editable customer text. No ticket metadata, citations, AI notes or internal fields.
-    const blob = new Blob([customerText], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `customer-response-${ticket.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.txt`
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-    setStatus('approved')
-    setShowReject(false)
-    setMessage('Đã xuất tệp văn bản dành cho khách hàng. Trạng thái phê duyệt chỉ áp dụng trên giao diện hiện tại.')
+  async function exportPdf() {
+    if (!data || data.approval_status !== 'APPROVED' || busy) return
+    setBusy(true); setError('')
+    try {
+      if (isCopilotDemo(token)) {
+        const preview = window.open('', '_blank')
+        if (!preview) throw new Error('Vui lòng cho phép mở cửa sổ để lưu PDF.')
+        preview.document.title = `Phản hồi khách hàng - ${ticket.id}`
+        const style = preview.document.createElement('style')
+        style.textContent = 'body{font:16px Arial,sans-serif;margin:24mm}pre{white-space:pre-wrap;font:inherit;line-height:1.6}'
+        preview.document.head.append(style)
+        const content = preview.document.createElement('pre')
+        content.textContent = data.draft
+        preview.document.body.append(content)
+        preview.focus(); preview.print()
+      } else await exportCopilotPdf(ticket.id, token)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Không thể xuất PDF.') }
+    finally { setBusy(false) }
   }
-
-  function reject() {
-    if (!canReview) return
-    if (!rejectReason.trim()) {
-      setMessage('Bắt buộc nhập lý do từ chối.')
-      return
-    }
-    setStatus('rejected')
-    setShowReject(false)
-    setMessage('Đã ghi nhận từ chối trên giao diện hiện tại; chưa gửi lên máy chủ.')
-  }
-
-  return (
-    <section className="panel crm30-review" aria-labelledby="crm30-title">
-      <div className="crm30-header">
-        <div>
-          <span className="crm30-kicker">CRM-30 · Kiểm duyệt phản hồi</span>
-          <h2 id="crm30-title">Kiểm duyệt phản hồi</h2>
-        </div>
-        <span className={`crm30-status crm30-status-${status}`}>
-          {status === 'pending' ? 'Chờ duyệt' : status === 'approved' ? 'Đã phê duyệt' : 'Đã từ chối'}
-        </span>
+  const dirty = data !== null && draft !== data.draft
+  return <section className="panel crm30-review" aria-labelledby="copilot-title" aria-busy={loading || busy}>
+    <div className="crm30-header"><h2 id="copilot-title">Bản nháp Copilot AI</h2>
+      {data && <span role="status" className={`crm30-status crm30-status-${data.approval_status.toLowerCase()}`}>{data.approval_status}</span>}
+    </div>
+    {isCopilotDemo(token) && <label className="crm30-label">Vai trò demo
+      <select aria-label="Vai trò demo" value={role ?? 'ADMIN'} disabled={busy || loading} onChange={event => {
+        setError('')
+        void signIn(createDemoToken(DEMO_EMAIL, DEMO_PASSWORD, event.target.value as UserRole)).catch(() => setError('Không thể đổi vai trò demo.'))
+      }}>
+        <option value="ADMIN">ADMIN — chỉ xem</option>
+        <option value="STAFF">STAFF — chỉ xem</option>
+        <option value="ENGINEER">ENGINEER — chỉnh sửa và duyệt</option>
+        <option value="MANAGER">MANAGER — chỉnh sửa và duyệt</option>
+      </select>
+    </label>}
+    {loading && <p role="status">Đang tải bản nháp…</p>}
+    {error && <p role="alert" className="crm30-reason">{error}</p>}
+    {!loading && !data && <button className="secondary-button" onClick={() => setRetry(value => value + 1)}>Thử lại</button>}
+    {data && <>
+      <p><strong>Intent:</strong> {data.intent}</p>
+      {isCopilotDemo(token) && <p className="crm30-helper">Dữ liệu demo. Phê duyệt được giữ trong phiên chạy; xuất PDF mở hộp thoại in, chọn Lưu dưới dạng PDF.</p>}
+      <label className="crm30-label" htmlFor="copilot-draft">Nội dung phản hồi khách hàng</label>
+      <textarea id="copilot-draft" className="crm30-editor" rows={10} value={draft} readOnly={!canReview || busy || data.approval_status === 'APPROVED'} onChange={event => setDraft(event.target.value)} />
+      {dirty && <p className="crm30-helper">Có chỉnh sửa chưa lưu. Nội dung sẽ được gửi kèm khi phê duyệt hoặc từ chối.</p>}
+      <div className="copilot-citations"><h3>Tài liệu trích dẫn</h3>
+        {data.citations.length === 0 && <p>Chưa có trích dẫn.</p>}
+        {data.citations.map(item => <button key={item.id} className="evidence-source-button" onClick={() => setSelected(item)}>Xem tài liệu nguồn {item.id} · {item.title} · Trang {item.page}</button>)}
       </div>
-
-      <label className="crm30-label" htmlFor="crm30-customer-draft">Bản nháp phản hồi khách hàng</label>
-      <textarea
-        id="crm30-customer-draft"
-        className="crm30-editor"
-        spellCheck={false}
-        value={draft}
-        readOnly={!canReview}
-        onChange={event => handleEdit(event.target.value)}
-        rows={9}
-        placeholder="Nhập nội dung phản hồi dành riêng cho khách hàng..."
-      />
-      <p className="crm30-helper">Chỉ nội dung trong ô này được xuất ra file .txt. Đây là bản nháp minh họa, chưa phải kết quả từ hệ thống AI hoặc máy chủ.</p>
-
-      {canReview && showReject && (
-        <div className="crm30-reject-box">
-          <label className="crm30-label" htmlFor="crm30-reject-reason">Lý do từ chối <span aria-hidden="true">*</span></label>
-          <textarea
-            id="crm30-reject-reason"
-            rows={3}
-            value={rejectReason}
-            onChange={event => { setRejectReason(event.target.value); setMessage('') }}
-            placeholder="Nêu rõ lý do để điều chỉnh phản hồi..."
-            aria-required="true"
-          />
-          <div className="crm30-actions">
-            <button type="button" className="crm30-reject-confirm" onClick={reject}>Xác nhận từ chối</button>
-            <button type="button" className="crm30-neutral" onClick={() => { setShowReject(false); setMessage('') }}>Hủy</button>
-          </div>
-        </div>
-      )}
-
-      {canReview && !showReject && (
-        <div className="crm30-actions">
-          <button type="button" className="crm30-neutral" onClick={() => { setShowReject(true); setMessage('') }}>Từ chối</button>
-          <button type="button" className="crm30-approve" onClick={approveAndExport} disabled={!draft.trim()}>Phê duyệt &amp; xuất văn bản</button>
-        </div>
-      )}
-
-      {!canReview && (
-  <p className="crm30-helper" role="note">
-    Bạn chỉ có quyền xem bản nháp.
-    Chức năng kiểm duyệt dành cho Kỹ sư và Quản lý.
-  </p>
-)}
-      {status === 'rejected' && <p className="crm30-reason"><strong>Lý do từ chối:</strong> {rejectReason}</p>}
-      {message && <p className="crm30-message" role="status">{message}</p>}
-      <p className="crm30-disclaimer">Bản minh họa giao diện: chưa lưu phê duyệt hoặc từ chối lên máy chủ, chưa gửi phản hồi cho khách hàng. Trạng thái sẽ được đặt lại khi tải lại trang.</p>
-    </section>
-  )
+      {data.approval_status === 'REJECTED' && <p className="crm30-reason"><strong>Lý do từ chối:</strong> {data.rejection_reason || 'Chưa có lý do.'}</p>}
+      {canReview && data.approval_status !== 'APPROVED' && <div className="crm30-actions">
+        <button ref={rejectButton} className="crm30-neutral" disabled={busy || !draft.trim()} onClick={() => { setReason(''); setError(''); dialog.current?.showModal() }}>Từ chối</button>
+        <button className="crm30-approve" disabled={busy || !draft.trim()} onClick={() => void review('approve')}>{busy ? 'Đang xử lý…' : 'Phê duyệt'}</button>
+      </div>}
+      {data.approval_status === 'APPROVED' && <button className="primary-button" disabled={busy} onClick={() => void exportPdf()}>Xuất PDF</button>}
+      {!canReview && <p className="crm30-helper">Bạn có quyền xem. Phê duyệt dành cho ENGINEER và MANAGER.</p>}
+    </>}
+    <dialog ref={dialog} className="copilot-reject-dialog" aria-labelledby="reject-title" onCancel={event => { if (busy) event.preventDefault() }} onClose={() => rejectButton.current?.focus()}>
+      <form onSubmit={event => { event.preventDefault(); void review('reject') }}>
+        <h2 id="reject-title">Từ chối bản nháp</h2>
+        <label htmlFor="copilot-reason">Lý do từ chối</label>
+        <textarea id="copilot-reason" autoFocus required maxLength={2000} value={reason} disabled={busy} onChange={event => setReason(event.target.value)} />
+        {error && <p role="alert">{error}</p>}
+        <div className="crm30-actions"><button type="button" className="crm30-neutral" disabled={busy} onClick={() => dialog.current?.close()}>Hủy</button>
+          <button className="crm30-reject-confirm" disabled={busy || !reason.trim()}>{busy ? 'Đang xử lý…' : 'Xác nhận từ chối'}</button></div>
+      </form>
+    </dialog>
+    <SourceViewer excerpt={selected} onClose={() => setSelected(null)} illustrative={isCopilotDemo(token)} />
+  </section>
 }
