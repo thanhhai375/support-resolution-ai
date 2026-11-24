@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import auth
+from app.api.v1.camunda_workflow import approval_router as copilot_approval_router
 from app.api.v1.camunda_workflow import router as camunda_workflow_router
 from app.api.v1.ingestion import router as ingestion_router
 from app.core.config import settings
@@ -24,6 +25,7 @@ app.include_router(ingestion_router)
 
 # CRM-44 Camunda BPMN Intent Routing & Process Status
 app.include_router(camunda_workflow_router)
+app.include_router(copilot_approval_router)
 
 
 if __name__ == "__main__":
