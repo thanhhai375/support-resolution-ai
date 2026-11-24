@@ -96,7 +96,24 @@ $env:CAMUNDA_URL="http://localhost:8080"
    ```
    - Trả về JSON gồm `process_instance_id`, `process_definition_key` (`ticket-triage`), `status` (`WAITING_HUMAN_APPROVAL` hoặc `ESCALATED_HAZARD`), `intent`, `routed_topic`, `current_activity_id`, và `worker_result`.
 
-### 3.2. Chế độ Fallback tương thích ngược (Không đặt `CAMUNDA_URL`)
+### 3.2. Approval API (bổ sung từ CRM-41)
+
+Sau khi process dừng ở `Task_HumanApproval`, FE gọi 1 trong 2 API (chạy bằng `app.main:app`):
+
+```http
+PATCH /api/v1/copilot/{ticket_id}/approve
+{ "approved_by": "engineer@example.com" }
+
+PATCH /api/v1/copilot/{ticket_id}/reject
+{ "rejection_reason": "Thiếu số serial", "rejected_by": "manager@example.com" }
+```
+
+- `approve` → `approval_status = APPROVED`, lưu `approved_by`, hoàn tất user task trên Camunda (process `COMPLETED`), ticket → `RESOLVED`.
+- `reject` → `approval_status = REJECTED`, lưu `rejection_reason`, process `REJECTED`, ticket → `IN_PROGRESS`.
+- DB: `approved_by` → `copilot_packages.reviewed_by`, `rejection_reason` → `copilot_packages.review_note` (ghi best-effort; response có cờ `persisted`).
+- Duyệt lần 2 cho cùng ticket → `409`; thiếu `approved_by` / `rejection_reason` → `422`.
+
+### 3.3. Chế độ Fallback tương thích ngược (Không đặt `CAMUNDA_URL`)
 
 Khi biến môi trường `CAMUNDA_URL` không được thiết lập:
 - `POST /api/copilot/analyze` và `run_copilot_pipeline()` tự động chạy luồng in-process cũ 100%, không phát sinh lỗi kết nối mạng và giữ nguyên toàn bộ kết quả cho các bài kiểm thử cũ (`test_crm24.py`, `test_crm28.py`).

@@ -226,3 +226,59 @@ async def test_camunda_rest_deploy_start_and_external_worker_complete():
         assert proc["engine_mode"] == "camunda_rest"
         assert proc["routed_topic"] == TOPIC_DOCUMENT_REQUEST
         assert completed_tasks == ["ext-task-1"]
+
+
+# --- 8. Approval API (CRM-41 request, implemented in CRM-44) ---------------
+def _start_local_process(ticket_id: str, hazard: bool = False):
+    import asyncio
+
+    return asyncio.run(
+        start_ticket_triage_process(
+            ticket_id=ticket_id,
+            ticket_description="Xin tài liệu SINAMICS G120",
+            intent="DOCUMENT_REQUEST",
+            is_hazard_escalated=hazard,
+            camunda_url="http://camunda.invalid:9",
+        )
+    )
+
+
+def test_approve_completes_process_and_stores_approver():
+    _start_local_process("TCK-APR-1")
+    res = client.patch("/api/v1/copilot/TCK-APR-1/approve", json={"approved_by": "engineer@example.com"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["approval_status"] == "APPROVED"
+    assert body["approved_by"] == "engineer@example.com"
+    assert body["process_status"] == "COMPLETED"
+    assert client.get("/api/copilot/process/TCK-APR-1/status").json()["status"] == "COMPLETED"
+
+
+def test_reject_stores_reason_and_ends_process():
+    _start_local_process("TCK-REJ-1")
+    res = client.patch(
+        "/api/v1/copilot/TCK-REJ-1/reject",
+        json={"rejection_reason": "Thiếu số serial", "rejected_by": "manager@example.com"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["approval_status"] == "REJECTED"
+    assert body["rejection_reason"] == "Thiếu số serial"
+    assert body["process_status"] == "REJECTED"
+
+
+def test_reject_requires_reason_and_approve_requires_approver():
+    assert client.patch("/api/v1/copilot/TCK-X/reject", json={}).status_code == 422
+    assert client.patch("/api/v1/copilot/TCK-X/approve", json={}).status_code == 422
+
+
+def test_second_review_returns_409():
+    _start_local_process("TCK-DUP-1")
+    assert client.patch("/api/v1/copilot/TCK-DUP-1/approve", json={"approved_by": "a"}).status_code == 200
+    assert client.patch("/api/v1/copilot/TCK-DUP-1/reject", json={"rejection_reason": "x"}).status_code == 409
+
+
+def test_approve_without_process_still_succeeds_without_camunda():
+    res = client.patch("/api/v1/copilot/TCK-NOPROC/approve", json={"approvedBy": "engineer@example.com"})
+    assert res.status_code == 200
+    assert res.json()["process_status"] is None

@@ -391,6 +391,88 @@ async def get_process_status(
     return record
 
 
+FINAL_PROCESS_STATUSES = {"COMPLETED", "REJECTED"}
+
+
+class ProcessAlreadyReviewedError(Exception):
+    """Raised when a ticket's BPMN process has already been approved/rejected."""
+
+
+async def complete_human_approval(
+    ticket_id: str,
+    *,
+    approved: bool,
+    reviewer: str,
+    reason: Optional[str] = None,
+    camunda_url: Optional[str] = None,
+    client: Optional[httpx.AsyncClient] = None,
+) -> Optional[Dict[str, Any]]:
+    """Complete the pending human User Task of the ticket's BPMN process (CRM-44/CRM-41).
+
+    Called after a reviewer approves/rejects the Copilot draft. When the process runs on a
+    real Camunda engine, the open user task is completed through the REST API; otherwise
+    the local BPMN state record is advanced to its end state.
+
+    Returns the updated process record, or None when no process exists for `ticket_id`
+    (e.g. `CAMUNDA_URL` was not set when the ticket was analysed).
+    """
+    key = str(ticket_id)
+    record = _PROCESS_STORE.get(key)
+    if record is None:
+        return None
+    if record.get("status") in FINAL_PROCESS_STATUSES:
+        raise ProcessAlreadyReviewedError(
+            f"Process for ticket '{key}' is already {record['status']}"
+        )
+
+    decision = "APPROVED" if approved else "REJECTED"
+    base_url = get_camunda_base_url(camunda_url)
+
+    if base_url and record.get("engine_mode") == "camunda_rest":
+        close_client = False
+        if client is None:
+            client = httpx.AsyncClient(timeout=3.0)
+            close_client = True
+        try:
+            tasks_res = await client.get(
+                f"{base_url}/task",
+                params={
+                    "processInstanceId": record.get("process_instance_id"),
+                    "taskDefinitionKey": record.get("current_activity_id"),
+                },
+            )
+            tasks_res.raise_for_status()
+            for task in tasks_res.json():
+                variables: Dict[str, Any] = {
+                    "approval_status": {"value": decision, "type": "String"},
+                    "reviewed_by": {"value": reviewer, "type": "String"},
+                }
+                if reason:
+                    variables["rejection_reason"] = {"value": reason, "type": "String"}
+                complete_res = await client.post(
+                    f"{base_url}/task/{task['id']}/complete",
+                    json={"variables": variables},
+                )
+                complete_res.raise_for_status()
+        except Exception as exc:
+            logger.warning("Could not complete Camunda user task for %s: %s", key, exc)
+            record["camunda_sync_error"] = str(exc)
+        finally:
+            if close_client:
+                await client.aclose()
+
+    record["approval_status"] = decision
+    record["reviewed_by"] = reviewer
+    if reason:
+        record["rejection_reason"] = reason
+    record["status"] = "COMPLETED" if approved else "REJECTED"
+    record["ended"] = True
+    record["current_activity_id"] = "EndEvent_TriageCompleted"
+    record["current_activity_name"] = "Hoàn tất xử lý Ticket"
+    record["completed_at"] = _now_iso()
+    return record
+
+
 def reset_process_store() -> None:
     """Clear stored process records (used in unit tests)."""
     _PROCESS_STORE.clear()
