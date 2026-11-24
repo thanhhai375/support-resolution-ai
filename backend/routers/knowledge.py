@@ -10,15 +10,9 @@ from app.api.deps import get_current_user as _get_current_user
 from app.api.deps import require_role as _require_role
 from pydantic import BaseModel, Field
 
-try:
-    from main import get_db
-except ImportError:
-    from backend.main import get_db
+from app.main import get_db
 
-try:
-    from models import KnowledgePassage, Product, UserRole
-except ImportError:
-    from backend.models import KnowledgePassage, Product, UserRole
+from models import KnowledgePassage, Product, UserRole
 
 router = APIRouter(prefix="/api/knowledge", tags=["Knowledge & Citations"])
 

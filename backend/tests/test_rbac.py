@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 # Import the main module first: models.py reuses its declarative Base, and this
 # order avoids a partially-initialized models module during router registration.
-from main import app as backend_app
+from app.main import app as backend_app
 from models import UserRole
 from app.api.deps import get_current_user
 from app.repositories import revocation_repository, user_repository

@@ -10,7 +10,8 @@ from alembic import context
 # Thêm đường dẫn thư mục backend vào sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from models import Base
+from app.main import Base
+import models 
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

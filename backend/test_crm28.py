@@ -20,7 +20,7 @@ from app.schemas.copilot import (
     SupportPackageOut,
 )
 from app.services.copilot_engine import CopilotEngineService, run_copilot_pipeline
-from main import app
+from app.main import app
 from models import Base, CopilotPackage, KnowledgePassage
 
 

@@ -4,10 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-try:
-    from main import get_db
-except ImportError:
-    from backend.main import get_db
+from app.main import get_db
 
 from app.schemas.copilot import CopilotAnalyzeRequest, SupportPackageOut
 from app.services.copilot_engine import run_copilot_pipeline

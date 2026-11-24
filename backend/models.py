@@ -15,14 +15,7 @@ from sqlalchemy import (
     func,
 )
 
-try:
-    from main import Base
-except ImportError:
-    try:
-        from backend.main import Base
-    except ImportError:
-        from sqlalchemy.orm import declarative_base
-        Base = declarative_base()
+from app.main import Base
 
 
 class UserRole(str, enum.Enum):

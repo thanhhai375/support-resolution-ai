@@ -24,7 +24,7 @@ from app.services.retriever import (
     get_mock_knowledge_passages,
     search_knowledge_passages,
 )
-from main import app, get_db
+from app.main import app, get_db
 from migrations.runner import get_migration_sql
 from models import Base, CopilotPackage, KnowledgePassage, Product
 
@@ -451,7 +451,7 @@ def test_api_analyze_endpoint_uses_real_retriever(shared_db):
     """Endpoint POST /api/copilot/analyze tích hợp Dependency DB và trả về trích dẫn thực."""
     app.dependency_overrides[get_db] = lambda: shared_db
     try:
-        from main import _copilot_role_guard
+        from app.main import _copilot_role_guard
         app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "username": "test"}
     except Exception:
         pass

@@ -12,15 +12,9 @@ from sqlalchemy.future import select
 from app.api.deps import get_current_user as _get_current_user
 from app.api.deps import require_role as _require_role
 
-try:
-    from main import get_db
-except ImportError:
-    from backend.main import get_db
+from app.main import get_db
 
-try:
-    from models import Ticket, Product, Category, UserRole
-except ImportError:
-    from backend.models import Ticket, Product, Category, UserRole
+from models import Ticket, Product, Category, UserRole
 
 from app.schemas.copilot import CopilotAnalyzeRequest, SupportPackageOut
 from app.services.copilot_engine import run_copilot_pipeline
