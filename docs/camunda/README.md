@@ -23,7 +23,9 @@ Quy trình `ticket-triage` (`SongNhat Copilot Ticket Triage Workflow`) thực th
 
 ## 2. Hướng dẫn Setup & Chạy trong 5 phút
 
-### Bước 1: Khởi động Camunda 7 bằng Docker Compose
+### Bước 1: Khởi động Camunda 7 Engine (Operaton) bằng Docker Compose
+
+> **Lưu ý:** Do Camunda 7 Community Edition đã ngừng hỗ trợ (EOL) và chặn kéo image `camunda/camunda-bpm-platform` công khai trên Docker Hub, file compose sử dụng **`operaton/operaton:latest`** — bản phân phối mã nguồn mở kế thừa trực tiếp Camunda 7 Run, tương thích 100% REST API `/engine-rest`, External Task Worker, namespace XML `camunda:` và giao diện Cockpit.
 
 Từ thư mục gốc dự án, chạy lệnh:
 
@@ -31,28 +33,29 @@ Từ thư mục gốc dự án, chạy lệnh:
 docker compose -f camunda/docker-compose.camunda.yml up -d
 ```
 
-* File `camunda/ticket-triage.bpmn` được mount tự động vào `/camunda/configuration/resources/ticket-triage.bpmn` và tự động deploy ngay khi container khởi động.
-* Mặc định Camunda chạy tại cổng `8080` (`CAMUNDA_PORT=8080`). Nếu bạn chạy chung với FastAPI trên cùng máy ở cổng `8080`, có thể đổi cổng Camunda sang `8088`:
-  ```powershell
-  $env:CAMUNDA_PORT="8088"; docker compose -f camunda/docker-compose.camunda.yml up -d
-  ```
+* File `camunda/ticket-triage.bpmn` được mount tự động vào `/operaton/configuration/resources/ticket-triage.bpmn` và tự động deploy ngay khi container khởi động.
+* Mặc định container ánh xạ ra cổng **`8088`** trên máy host (`CAMUNDA_PORT=8088`) để chạy song song với FastAPI Backend (`8080`) mà không bị xung đột cổng. Có thể đổi cổng khác bằng biến môi trường `CAMUNDA_PORT` nếu cần.
 
 ### Bước 2: Kiểm tra Camunda REST API & Đăng nhập Cockpit
 
 1. **Kiểm tra REST API trả về JSON:**
    ```powershell
-   curl http://localhost:8080/engine-rest/engine
+   curl http://localhost:8088/engine-rest/engine
    # Kết quả: [{"name":"default"}]
    ```
-2. **Đăng nhập Camunda Cockpit:**
-   - Mở trình duyệt tại: `http://localhost:8080/camunda/app/cockpit/default/`
+2. **Đăng nhập Cockpit:**
+   - Mở trình duyệt tại: `http://localhost:8088/operaton/app/cockpit/default/`
    - Tài khoản mặc định: **`demo` / `demo`**
-   - Vào mục **Processes** $\rightarrow$ xác nhận quy trình **`SongNhat Copilot Ticket Triage Workflow` (`ticket-triage`)** đã hiển thị trên Cockpit.
+   - Vào mục **Processes** $\rightarrow$ xác nhận quy trình **`SongNhat Copilot Ticket Triage Workflow` (`ticket-triage`)** đã hiển thị trên Cockpit (kèm sơ đồ BPMN và số lượng Process Instance đang chạy).
+
+   ![Danh sách quy trình trên Cockpit](../images/camunda-cockpit-processes.png)
+
+   ![Sơ đồ BPMN ticket-triage đang chạy trên Cockpit](../images/camunda-cockpit-diagram.png)
 
 ### Bước 3: Deploy thủ công `ticket-triage.bpmn` qua REST API (nếu cần)
 
 ```powershell
-curl -X POST http://localhost:8080/engine-rest/deployment/create `
+curl -X POST http://localhost:8088/engine-rest/deployment/create `
   -F "deployment-name=songnhat-ticket-triage" `
   -F "enable-duplicate-filtering=true" `
   -F "ticket-triage.bpmn=@../camunda/ticket-triage.bpmn"
@@ -63,7 +66,7 @@ Hoặc gọi hàm Python có sẵn trong `backend/app/camunda/worker.py`:
 import asyncio
 from app.camunda.worker import deploy_bpmn_to_camunda
 
-asyncio.run(deploy_bpmn_to_camunda(camunda_url="http://localhost:8080"))
+asyncio.run(deploy_bpmn_to_camunda(camunda_url="http://localhost:8088"))
 ```
 
 ---
@@ -74,8 +77,8 @@ asyncio.run(deploy_bpmn_to_camunda(camunda_url="http://localhost:8080"))
 
 ```powershell
 cd backend
-$env:CAMUNDA_URL="http://localhost:8080"
-.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+$env:CAMUNDA_URL="http://localhost:8088"
+.venv\Scripts\python -m uvicorn app.main:app --reload --port 8080
 ```
 
 1. **Khởi chạy phân tích & tạo Process Instance:**

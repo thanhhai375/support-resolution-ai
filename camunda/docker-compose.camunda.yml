@@ -1,23 +1,25 @@
 # ==================================================
-# SONGNHAT COPILOT — Camunda 7 BPM Platform (CRM-44)
+# SONGNHAT COPILOT — Camunda 7 Compatible BPM Engine (Operaton) (CRM-44)
+# Note: Camunda 7 CE reached EOL (Oct 2025) and restricted public Docker Hub pulls;
+# Operaton is the 100% Camunda 7 REST & BPMN namespace-compatible open-source fork.
 #
-# Run from project root or camunda directory:
+# Run from project root:
 #   docker compose -f camunda/docker-compose.camunda.yml up -d
 # ==================================================
 
 services:
   camunda:
-    image: camunda/camunda-bpm-platform:run-7.20.0
+    image: operaton/operaton:latest
     container_name: songnhat-camunda
     restart: unless-stopped
     ports:
-      - "${CAMUNDA_PORT:-8080}:8080"
+      - "${CAMUNDA_PORT:-8088}:8080"
     volumes:
-      - ./ticket-triage.bpmn:/camunda/configuration/resources/ticket-triage.bpmn:ro
+      - ./ticket-triage.bpmn:/operaton/configuration/resources/ticket-triage.bpmn:ro
     healthcheck:
       test:
         - CMD-SHELL
-        - wget -qO- http://localhost:8080/engine-rest/engine || exit 1
+        - wget -qO- http://localhost:8080/engine-rest/engine || curl -fsS http://localhost:8080/engine-rest/engine || exit 1
       interval: 10s
       timeout: 5s
       retries: 12
