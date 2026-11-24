@@ -32,6 +32,10 @@ jobs:
         working-directory: ./backend
         run: |
           python -m pytest tests/ -v
+      
+      - name: Run E2E Integration Tests (CRM-48)
+        working-directory: ./backend
+        run: python -m pytest tests/test_e2e.py -v
 
       - name: Run AI Copilot Benchmark Validation
         working-directory: ./backend
