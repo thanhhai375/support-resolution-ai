@@ -1,4 +1,4 @@
-﻿export interface KnowledgeExcerpt { id: string; productLine: 'Motors' | 'Drives'; title: string; document: string; page: number; content: string; revision: string }
+﻿export interface KnowledgeExcerpt { id: string; productLine: 'Motors' | 'Drives' | 'Chưa xác định'; title: string; document: string; page: number; content: string; revision: string }
 const topics = ['Xử lý quá nhiệt', 'Môi trường vận hành', 'Kiểm tra rung động', 'Thông tin nhãn thiết bị', 'Lịch sử cảnh báo', 'Bảo trì định kỳ']
 // Illustrative fixtures, not the actual approved technical corpus.
 export const knowledgeExcerpts: KnowledgeExcerpt[] = Array.from({ length: 300 }, (_, i) => {

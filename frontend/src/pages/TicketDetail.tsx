@@ -154,7 +154,7 @@ return <>
     </div>
 
     <aside className="ticket-detail-side">
-      <ReviewApprovalPanel key={ticket.id} ticket={ticket} />
+      <ReviewApprovalPanel key={ticket.id} ticket={ticket} onApproved={() => updateTicket({ ...ticket, status: 'RESOLVED' })} />
       
       <section className="panel ticket-info">
         <h2>Thông tin ticket</h2>

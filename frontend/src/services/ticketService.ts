@@ -57,6 +57,8 @@ function normalizeTicket(raw: unknown, index: number): Ticket {
   const responseTime = raw.responseTimeMinutes
   return {
     id: String(raw.ticket_number ?? raw.id ?? raw.ticketId ?? raw.caseId ?? `TK-${index + 1}`),
+    backendId: typeof raw.id === 'string' ? raw.id : undefined,
+    productId: typeof raw.product_id === 'string' ? raw.product_id : undefined,
     title: String(raw.subject ?? raw.title ?? 'Chưa có tiêu đề').replace('Khách hàng', '').trim(),
     customerName: String(
       raw.customerName
@@ -209,6 +211,7 @@ export async function createTicket(input: CreateTicketInput): Promise<Ticket> {
 
   return {
     ...ticket,
+    productId: ticket.productId ?? input.productId,
     customerName: input.customerName,
     createdAt: String(raw.created_at ?? raw.createdAt ?? new Date().toISOString()),
     priority: input.priority,
