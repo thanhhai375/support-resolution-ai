@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user, require_role as _require_role
 from app.main import get_db  # imported lazily by app.main.register_backend_components()
 
 from app.camunda.worker import (
@@ -81,8 +82,30 @@ async def get_copilot_process_status(ticket_id: str) -> dict[str, Any]:
     return record
 
 
-# --- Approval API (requested by CRM-41, implemented under CRM-44) -------------------------
-approval_router = APIRouter(prefix="/api/v1/copilot", tags=["Copilot Approval"])
+# --- Approval API (requested by CRM-41, implemented under CRM-44, RBAC added in CRM-69) ---
+_CRM40_ROLE_TO_LEGACY = {
+    "STAFF": "support_agent",
+    "ENGINEER": "technical_approver",
+    "MANAGER": "knowledge_steward",
+    "ADMIN": "administrator",
+}
+_approver_access = _require_role("technical_approver", "knowledge_steward")
+
+
+def require_approver_role(current_user: dict = Depends(get_current_user)) -> dict:
+    """Require ENGINEER or MANAGER (legacy: technical_approver / knowledge_steward)."""
+    normalized_user = dict(current_user)
+    raw_role = getattr(normalized_user.get("role"), "value", normalized_user.get("role"))
+    role_str = str(raw_role).strip() if raw_role is not None else ""
+    normalized_user["role"] = _CRM40_ROLE_TO_LEGACY.get(role_str.upper(), role_str.lower())
+    return _approver_access(normalized_user)
+
+
+approval_router = APIRouter(
+    prefix="/api/v1/copilot",
+    tags=["Copilot Approval"],
+    dependencies=[Depends(require_approver_role)],
+)
 
 
 class ApproveRequest(BaseModel):

@@ -35,10 +35,15 @@ def _clean_camunda_state(monkeypatch: pytest.MonkeyPatch):
     # CRM-40 guards the copilot routes and CRM-44 tests must not need Postgres / a login.
     monkeypatch.setattr(camunda_workflow, "_persist_decision", _no_db_persist)
     app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "email": "test"}
+    app.dependency_overrides[camunda_workflow.require_approver_role] = lambda: {
+        "role": "ENGINEER",
+        "email": "engineer@example.com",
+    }
     app.dependency_overrides[get_db] = lambda: None
     reset_process_store()
     yield
     app.dependency_overrides.pop(_copilot_role_guard, None)
+    app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
     app.dependency_overrides.pop(get_db, None)
     reset_process_store()
 
@@ -294,3 +299,134 @@ def test_approve_without_process_still_succeeds_without_camunda():
     res = client.patch("/api/v1/copilot/TCK-NOPROC/approve", json={"approvedBy": "engineer@example.com"})
     assert res.status_code == 200
     assert res.json()["process_status"] is None
+
+
+# --- 9. CRM-69 RBAC Enforcement on /api/v1/copilot/{ticket_id}/approve|reject
+def test_crm69_approve_and_reject_without_token_return_401():
+    from app.api.v1 import camunda_workflow
+    from app.repositories import revocation_repository
+
+    revocation_repository.reset_all()
+    app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
+
+    approve_res = client.patch(
+        "/api/v1/copilot/TCK-UNAUTH/approve",
+        json={"approved_by": "nobody@example.com"},
+    )
+    reject_res = client.patch(
+        "/api/v1/copilot/TCK-UNAUTH/reject",
+        json={"rejection_reason": "no auth"},
+    )
+    assert approve_res.status_code == 401
+    assert reject_res.status_code == 401
+
+
+@pytest.mark.parametrize("forbidden_role", ["STAFF", "support_agent", "ADMIN", "administrator"])
+def test_crm69_staff_and_admin_are_forbidden_403(forbidden_role: str):
+    from app.api.deps import get_current_user
+    from app.api.v1 import camunda_workflow
+
+    app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": "u-forbidden",
+        "email": "forbidden@songnhat.vn",
+        "role": forbidden_role,
+    }
+    try:
+        approve_res = client.patch(
+            "/api/v1/copilot/TCK-FORBID/approve",
+            json={"approved_by": "forbidden@songnhat.vn"},
+        )
+        reject_res = client.patch(
+            "/api/v1/copilot/TCK-FORBID/reject",
+            json={"rejection_reason": "not allowed"},
+        )
+        assert approve_res.status_code == 403
+        assert reject_res.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.parametrize(
+    "allowed_role",
+    ["ENGINEER", "technical_approver", "MANAGER", "knowledge_steward"],
+)
+def test_crm69_engineer_and_manager_can_approve_and_reject(allowed_role: str):
+    from app.api.deps import get_current_user
+    from app.api.v1 import camunda_workflow
+
+    app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": "u-approver",
+        "email": "approver@songnhat.vn",
+        "role": allowed_role,
+    }
+    try:
+        _start_local_process(f"TCK-OK-APR-{allowed_role}")
+        approve_res = client.patch(
+            f"/api/v1/copilot/TCK-OK-APR-{allowed_role}/approve",
+            json={"approved_by": "approver@songnhat.vn"},
+        )
+        assert approve_res.status_code == 200
+        assert approve_res.json()["approval_status"] == "APPROVED"
+
+        _start_local_process(f"TCK-OK-REJ-{allowed_role}")
+        reject_res = client.patch(
+            f"/api/v1/copilot/TCK-OK-REJ-{allowed_role}/reject",
+            json={"rejection_reason": "Thiếu thông tin", "rejected_by": "approver@songnhat.vn"},
+        )
+        assert reject_res.status_code == 200
+        assert reject_res.json()["approval_status"] == "REJECTED"
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_crm69_real_jwt_token_rbac_end_to_end():
+    from app.api.v1 import camunda_workflow
+    from app.core.security import create_access_token
+    from app.repositories import revocation_repository, user_repository
+
+    revocation_repository.reset_all()
+    app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
+
+    staff_email = "staff-crm69@songnhat.vn"
+    eng_email = "eng-crm69@songnhat.vn"
+    user_repository.add_user(
+        staff_email, "pw", full_name="Staff", role="support_agent", user_id="u-s69"
+    )
+    user_repository.add_user(
+        eng_email, "pw", full_name="Engineer", role="technical_approver", user_id="u-e69"
+    )
+    try:
+        staff_token = create_access_token(staff_email)
+        eng_token = create_access_token(eng_email)
+
+        denied = client.patch(
+            "/api/v1/copilot/TCK-JWT-69/approve",
+            json={"approved_by": staff_email},
+            headers={"Authorization": f"Bearer {staff_token}"},
+        )
+        assert denied.status_code == 403
+
+        _start_local_process("TCK-JWT-69")
+        allowed = client.patch(
+            "/api/v1/copilot/TCK-JWT-69/approve",
+            json={"approved_by": eng_email},
+            headers={"Authorization": f"Bearer {eng_token}"},
+        )
+        assert allowed.status_code == 200
+        assert allowed.json()["approval_status"] == "APPROVED"
+
+        # CRM-32: immediate token revocation also blocks approval endpoints (401)
+        revocation_repository.revoke_token(eng_token)
+        revoked = client.patch(
+            "/api/v1/copilot/TCK-JWT-69-REV/approve",
+            json={"approved_by": eng_email},
+            headers={"Authorization": f"Bearer {eng_token}"},
+        )
+        assert revoked.status_code == 401
+    finally:
+        user_repository._USERS.pop(staff_email, None)
+        user_repository._USERS.pop(eng_email, None)
+        revocation_repository.reset_all()
+
