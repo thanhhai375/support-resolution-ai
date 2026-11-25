@@ -96,12 +96,11 @@ def e2e_pg_url():
 
 @pytest.fixture(scope="module")
 def e2e_app(e2e_pg_url):
-    """FastAPI app gồm đủ router của luồng E2E, trỏ vào PostgreSQL thật.
+    """FastAPI app thật của backend (app/main.py), trỏ vào PostgreSQL thật.
 
-    Backend hiện có 2 điểm vào (backend/main.py và backend/app/main.py), nên ở đây ghép các
-    router cần cho luồng Upload CSV -> Copilot -> Duyệt vào cùng một app thử nghiệm.
+    Từ khi team gộp backend/main.py vào backend/app/main.py thì app/main.py đã gắn đủ router
+    (tickets, copilot, knowledge, auth, ingestion, camunda) nên dùng thẳng app đó.
     """
-    from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import NullPool
@@ -111,7 +110,7 @@ def e2e_app(e2e_pg_url):
     # Cho ingestion (psycopg2) và mọi code đọc biến môi trường
     mp.setenv("DATABASE_URL", e2e_pg_url)
 
-    import main  # backend/main.py
+    from app import main  
 
     test_engine = create_async_engine(async_url, poolclass=NullPool, future=True)
     mp.setattr(main, "engine", test_engine)
@@ -122,14 +121,7 @@ def e2e_app(e2e_pg_url):
     )
     mp.setattr(main, "_db_initialized", False)  # buộc chạy lại migration trên DB mới
 
-    from app.api.v1.camunda_workflow import approval_router
-    from app.api.v1.ingestion import router as ingestion_router
-
-    app = FastAPI(title="CRM-48 E2E test app", lifespan=main.lifespan)
-    app.router.routes.extend(main.app.router.routes)  # tickets, copilot, knowledge, auth
-    app.include_router(ingestion_router)  # POST /api/v1/ingestion/upload
-    app.include_router(approval_router)  # PATCH /api/v1/copilot/{id}/approve
-
+    app = main.app
     app.state.main_module = main
     app.state.pg_url = e2e_pg_url
     try:
