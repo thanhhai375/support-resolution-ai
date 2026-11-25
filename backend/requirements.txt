@@ -16,3 +16,4 @@ psycopg2-binary>=2.9    # CRM-42: sync DB write in ingestion pipeline
 greenlet>=3.0
 aiosqlite
 alembic
+testcontainers[postgres]>=4.0
