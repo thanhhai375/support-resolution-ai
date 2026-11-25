@@ -5,13 +5,17 @@ exposes:
   - `POST /api/copilot/analyze`
   - `GET  /api/copilot/process/{ticket_id}/status`
 """
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.main import get_db  # imported lazily by app.main.register_backend_components()
 
 from app.camunda.worker import (
     ProcessAlreadyReviewedError,
@@ -32,11 +36,19 @@ class CamundaAnalyzeRequest(BaseModel):
 
 
 @router.post("/analyze")
-async def analyze_with_camunda_workflow(payload: CamundaAnalyzeRequest) -> dict[str, Any]:
-    """Run Copilot analysis and start a Camunda BPMN process instance when `CAMUNDA_URL` is set."""
+async def analyze_with_camunda_workflow(
+    payload: CamundaAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Run Copilot analysis and start a Camunda BPMN process instance when `CAMUNDA_URL` is set.
+
+    This is the single `POST /api/copilot/analyze` handler: it uses the shared DB session
+    (real retriever + saved `copilot_packages`) exactly like the legacy copilot router.
+    """
     package = await run_copilot_pipeline(
         ticket_description=payload.ticket_description,
         ticket_id=payload.ticket_id,
+        db=db,
     )
     result = package.model_dump(mode="json")
 
@@ -100,19 +112,34 @@ def _to_uuid(ticket_id: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, str(ticket_id))
 
 
+DB_PERSIST_TIMEOUT_SECONDS = 5.0
+
+
 async def _persist_decision(
+    ticket_id: str, *, approved: bool, reviewer: str, reason: Optional[str]
+) -> bool:
+    """Best-effort DB update; never blocks the API longer than DB_PERSIST_TIMEOUT_SECONDS."""
+    try:
+        return await asyncio.wait_for(
+            _persist_decision_inner(ticket_id, approved=approved, reviewer=reviewer, reason=reason),
+            timeout=DB_PERSIST_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Persisting approval decision for %s timed out (DB unreachable?)", ticket_id)
+        return False
+
+
+async def _persist_decision_inner(
     ticket_id: str, *, approved: bool, reviewer: str, reason: Optional[str]
 ) -> bool:
     """Best-effort DB update of `copilot_packages` (+ ticket status). Returns True if saved."""
     try:
-        try:
-            from main import AsyncSessionLocal
-            from models import CopilotPackage, Ticket
-        except ImportError:
-            from backend.main import AsyncSessionLocal
-            from backend.models import CopilotPackage, Ticket
+        import app.main as app_main
+        from models import CopilotPackage, Ticket
         from sqlalchemy.future import select
 
+        await app_main.ensure_db_initialized()
+        AsyncSessionLocal = app_main.AsyncSessionLocal
         pkg_id = _to_uuid(ticket_id)
         async with AsyncSessionLocal() as db:
             pkg = (

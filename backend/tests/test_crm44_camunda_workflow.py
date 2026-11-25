@@ -25,9 +25,21 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _clean_camunda_state(monkeypatch: pytest.MonkeyPatch):
+    from app.api.v1 import camunda_workflow
+    from app.main import _copilot_role_guard, get_db
+
+    async def _no_db_persist(*args, **kwargs):
+        return False
+
     monkeypatch.delenv("CAMUNDA_URL", raising=False)
+    # CRM-40 guards the copilot routes and CRM-44 tests must not need Postgres / a login.
+    monkeypatch.setattr(camunda_workflow, "_persist_decision", _no_db_persist)
+    app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "email": "test"}
+    app.dependency_overrides[get_db] = lambda: None
     reset_process_store()
     yield
+    app.dependency_overrides.pop(_copilot_role_guard, None)
+    app.dependency_overrides.pop(get_db, None)
     reset_process_store()
 
 

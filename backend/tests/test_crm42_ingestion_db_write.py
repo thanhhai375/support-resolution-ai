@@ -239,14 +239,11 @@ class TestUploadResponseSchema:
     """TC-42-04: Endpoint POST /upload trả thêm 3 trường CRM-42."""
 
     def _make_app(self):
-        """Import app.main (Docker entrypoint) hoặc fallback main."""
         try:
-            from app.main import app  # type: ignore
-        except (ImportError, AttributeError):
-            try:
-                from main import app  # type: ignore
-            except ImportError:
-                pytest.skip("Cannot import app for TestClient")
+            from app.main import app
+        except (ImportError, AttributeError) as exc:
+            pytest.skip(f"Cannot import app.main: {exc}")
+
         return app
 
     def test_upload_response_has_crm42_fields(self, tmp_path: Path) -> None:
