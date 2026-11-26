@@ -201,3 +201,20 @@ class CopilotPackage(Base):
     review_note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+class AuditLog(Base):
+    """Immutable audit trail for security-sensitive user actions."""
+    __tablename__ = "audit_logs"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    action = Column(String(80), nullable=False, index=True)
+    resource_type = Column(String(80), nullable=True)
+    resource_id = Column(String(150), nullable=True, index=True)
+    actor_email = Column(String(255), nullable=True, index=True)
+    actor_role = Column(String(80), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    status_code = Column(Integer, nullable=False)
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

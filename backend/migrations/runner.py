@@ -347,6 +347,12 @@ async def run_migrations(engine: Any) -> None:
                         "ON knowledge_passages USING gin (passage_content gin_trgm_ops);"
                     )
                 )
+                # CRM-60: normalize approval status constraint and ensure audit table exists.
+                await conn.execute(text("ALTER TABLE copilot_packages DROP CONSTRAINT IF EXISTS chk_copilot_approval_status"))
+                await conn.execute(text(
+                    "ALTER TABLE copilot_packages ADD CONSTRAINT chk_copilot_approval_status "
+                    "CHECK (UPPER(approval_status) IN ('PENDING', 'APPROVED', 'REJECTED'))"
+                ))
             logger.info("Hoàn tất migration 002: pg_trgm & idx_knowledge_passages_content_trgm thành công!")
         else:
             # SQLite hoặc cơ sở dữ liệu thử nghiệm khác

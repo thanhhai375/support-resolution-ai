@@ -13,6 +13,7 @@ from uuid import UUID
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware.audit_logging import AuditLoggingMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -174,6 +175,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuditLoggingMiddleware)
 
 
 @app.get("/")
