@@ -50,17 +50,24 @@ def _clean_camunda_state(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(camunda_workflow, "_persist_decision", _no_db_persist)
     monkeypatch.setattr(app_main, "AsyncSessionLocal", lambda: _NoOpSession())
     app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "email": "test"}
+    app.dependency_overrides[camunda_workflow.require_viewer_role] = lambda: {
+        "role": "STAFF",
+        "email": "staff@example.com",
+    }
     app.dependency_overrides[camunda_workflow.require_approver_role] = lambda: {
         "role": "ENGINEER",
         "email": "engineer@example.com",
     }
     app.dependency_overrides[get_db] = lambda: None
     reset_process_store()
+    camunda_workflow.reset_approval_cache()
     yield
     app.dependency_overrides.pop(_copilot_role_guard, None)
+    app.dependency_overrides.pop(camunda_workflow.require_viewer_role, None)
     app.dependency_overrides.pop(camunda_workflow.require_approver_role, None)
     app.dependency_overrides.pop(get_db, None)
     reset_process_store()
+    camunda_workflow.reset_approval_cache()
 
 
 # --- 1. BPMN XML Structure Validation --------------------------------------
@@ -282,8 +289,9 @@ def test_approve_completes_process_and_stores_approver():
     body = res.json()
     assert body["approval_status"] == "APPROVED"
     assert body["approved_by"] == "engineer@example.com"
-    assert body["process_status"] == "COMPLETED"
-    assert client.get("/api/copilot/process/TCK-APR-1/status").json()["status"] == "COMPLETED"
+    assert body["approved_at"] is not None
+    assert body["process_status"] == "RESOLVED"
+    assert client.get("/api/copilot/process/TCK-APR-1/status").json()["status"] == "RESOLVED"
 
 
 def test_reject_stores_reason_and_ends_process():

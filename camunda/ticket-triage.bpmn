@@ -55,11 +55,21 @@
       <bpmn:incoming>Flow_DocToReview</bpmn:incoming>
       <bpmn:incoming>Flow_ProgressToReview</bpmn:incoming>
       <bpmn:incoming>Flow_TechToReview</bpmn:incoming>
-      <bpmn:outgoing>Flow_ReviewToEnd</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ReviewToDecision</bpmn:outgoing>
     </bpmn:userTask>
 
-    <bpmn:endEvent id="EndEvent_TriageCompleted" name="Hoàn tất xử lý Ticket">
-      <bpmn:incoming>Flow_ReviewToEnd</bpmn:incoming>
+    <bpmn:exclusiveGateway id="Gateway_ApprovalDecision" name="Quyết định phê duyệt?" default="Flow_DecisionToRejected">
+      <bpmn:incoming>Flow_ReviewToDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_DecisionToResolved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_DecisionToRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_Resolved" name="RESOLVED - Hoàn tất xử lý Ticket">
+      <bpmn:incoming>Flow_DecisionToResolved</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="EndEvent_Rejected" name="REJECTED - Từ chối bản nháp">
+      <bpmn:incoming>Flow_DecisionToRejected</bpmn:incoming>
     </bpmn:endEvent>
 
     <bpmn:sequenceFlow id="Flow_StartToSafety" sourceRef="StartEvent_TicketReceived" targetRef="Gateway_SafetyCheck" />
@@ -85,7 +95,11 @@
     <bpmn:sequenceFlow id="Flow_DocToReview" sourceRef="Task_DocumentRequest" targetRef="Task_HumanApproval" />
     <bpmn:sequenceFlow id="Flow_ProgressToReview" sourceRef="Task_ServiceProgress" targetRef="Task_HumanApproval" />
     <bpmn:sequenceFlow id="Flow_TechToReview" sourceRef="Task_TechnicalEscalation" targetRef="Task_HumanApproval" />
-    <bpmn:sequenceFlow id="Flow_ReviewToEnd" sourceRef="Task_HumanApproval" targetRef="EndEvent_TriageCompleted" />
+    <bpmn:sequenceFlow id="Flow_ReviewToDecision" sourceRef="Task_HumanApproval" targetRef="Gateway_ApprovalDecision" />
+    <bpmn:sequenceFlow id="Flow_DecisionToResolved" name="APPROVED" sourceRef="Gateway_ApprovalDecision" targetRef="EndEvent_Resolved">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${approval_status == 'APPROVED'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_DecisionToRejected" name="REJECTED" sourceRef="Gateway_ApprovalDecision" targetRef="EndEvent_Rejected" />
   </bpmn:process>
 
   <bpmndi:BPMNDiagram id="BPMNDiagram_TicketTriage">
@@ -138,10 +152,24 @@
         <dc:Bounds x="930" y="320" width="170" height="80" />
       </bpmndi:BPMNShape>
 
-      <bpmndi:BPMNShape id="EndEvent_TriageCompleted_di" bpmnElement="EndEvent_TriageCompleted">
-        <dc:Bounds x="1182" y="342" width="36" height="36" />
+      <bpmndi:BPMNShape id="Gateway_ApprovalDecision_di" bpmnElement="Gateway_ApprovalDecision" isMarkerVisible="true">
+        <dc:Bounds x="1155" y="335" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1160" y="385" width="80" height="27" />
+          <dc:Bounds x="1136" y="392" width="88" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="EndEvent_Resolved_di" bpmnElement="EndEvent_Resolved">
+        <dc:Bounds x="1292" y="262" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1266" y="305" width="88" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="EndEvent_Rejected_di" bpmnElement="EndEvent_Rejected">
+        <dc:Bounds x="1292" y="422" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1266" y="465" width="88" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
 
@@ -217,9 +245,21 @@
         <di:waypoint x="930" y="360" />
       </bpmndi:BPMNEdge>
 
-      <bpmndi:BPMNEdge id="Flow_ReviewToEnd_di" bpmnElement="Flow_ReviewToEnd">
+      <bpmndi:BPMNEdge id="Flow_ReviewToDecision_di" bpmnElement="Flow_ReviewToDecision">
         <di:waypoint x="1100" y="360" />
-        <di:waypoint x="1182" y="360" />
+        <di:waypoint x="1155" y="360" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_DecisionToResolved_di" bpmnElement="Flow_DecisionToResolved">
+        <di:waypoint x="1180" y="335" />
+        <di:waypoint x="1180" y="280" />
+        <di:waypoint x="1292" y="280" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_DecisionToRejected_di" bpmnElement="Flow_DecisionToRejected">
+        <di:waypoint x="1180" y="385" />
+        <di:waypoint x="1180" y="440" />
+        <di:waypoint x="1292" y="440" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

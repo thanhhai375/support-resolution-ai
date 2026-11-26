@@ -441,26 +441,92 @@ async def update_ticket(
 @router.patch("/{ticket_id}/approve", status_code=200)
 @router.patch("/{ticket_id}/copilot/approve", status_code=200)
 async def approve_ticket_response(
-    ticket_id: UUID,
+    ticket_id: str,
     payload: Optional[dict[str, Any]] = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(UserRole.ENGINEER, UserRole.MANAGER)),
 ):
-    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
-    ticket = result.scalars().first()
+    from app.api.v1.camunda_workflow import _APPROVAL_CACHE, _review
+    from app.camunda.worker import ProcessAlreadyReviewedError, complete_human_approval
+    from models import CopilotPackage
 
-    if not ticket:
+    approver_val = None
+    edited_draft = None
+    if payload:
+        approver_val = (
+            payload.get("approved_by")
+            or payload.get("approvedBy")
+            or payload.get("approver_id")
+            or payload.get("approverId")
+        )
+        edited_draft = payload.get("draft") or payload.get("approved_text") or payload.get("approvedText")
+    approver_str = str(approver_val) if approver_val else current_user["email"]
+
+    parsed_uuid: Optional[UUID] = None
+    try:
+        parsed_uuid = UUID(str(ticket_id))
+    except ValueError:
+        parsed_uuid = None
+
+    ticket = None
+    if parsed_uuid is not None and db is not None:
+        result = await db.execute(select(Ticket).where(Ticket.id == parsed_uuid))
+        ticket = result.scalars().first()
+
+    if ticket is None:
+        # Fallback for non-DB / string business keys routed via alias
+        if str(ticket_id) in _APPROVAL_CACHE:
+            return await _review(
+                str(ticket_id),
+                approved=True,
+                reviewer=approver_str,
+                reason=None,
+                draft=edited_draft,
+                db=db,
+            )
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    ticket.status = "RESOLVED"
-    if payload:
-        approver = payload.get("approver_id") or payload.get("approverId")
-        if approver:
-            ticket.assigned_to = str(approver)
-    else:
-        ticket.assigned_to = current_user["email"]
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
 
-    ticket.updated_at = datetime.now(timezone.utc)
+    try:
+        proc = await complete_human_approval(
+            str(ticket.id),
+            approved=True,
+            reviewer=approver_str,
+            approved_at=now_iso,
+        )
+    except ProcessAlreadyReviewedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    ticket.status = "RESOLVED"
+    ticket.assigned_to = approver_str
+    ticket.updated_at = now_dt
+
+    pkg_res = await db.execute(
+        select(CopilotPackage)
+        .where(CopilotPackage.ticket_id == ticket.id)
+        .order_by(CopilotPackage.updated_at.desc(), CopilotPackage.created_at.desc())
+    )
+    pkg = pkg_res.scalars().first()
+    if pkg is not None:
+        pkg.approval_status = "APPROVED"
+        pkg.reviewed_by = approver_str
+        pkg.reviewed_at = now_dt
+        pkg.review_note = None
+        if edited_draft:
+            pkg.draft = edited_draft
+            pkg.draft_response = edited_draft
+
+    key = str(ticket.id)
+    if key in _APPROVAL_CACHE:
+        _APPROVAL_CACHE[key]["approval_status"] = "APPROVED"
+        _APPROVAL_CACHE[key]["approved_by"] = approver_str
+        _APPROVAL_CACHE[key]["approved_at"] = now_iso
+        _APPROVAL_CACHE[key]["rejection_reason"] = None
+        if edited_draft:
+            _APPROVAL_CACHE[key]["draft"] = edited_draft
+            _APPROVAL_CACHE[key]["draft_response"] = edited_draft
 
     await db.commit()
     await db.refresh(ticket)
@@ -468,9 +534,68 @@ async def approve_ticket_response(
     serialized = _serialize_ticket(ticket)
     return {
         **serialized,
+        "approval_status": "APPROVED",
+        "approved_by": approver_str,
+        "approved_at": now_iso,
+        "rejection_reason": None,
+        "persisted": pkg is not None,
+        "process_status": proc["status"] if proc else None,
+        "process_instance_id": proc.get("process_instance_id") if proc else None,
         "message": "Ticket response approved successfully.",
         "data": serialized,
     }
+
+
+# 5b. Alias GET /api/tickets/{ticket_id}/copilot & /copilot/approval (CRM-58)
+@router.get("/{ticket_id}/copilot", status_code=200)
+@router.get("/{ticket_id}/copilot/approval", status_code=200)
+async def get_ticket_copilot_approval_alias(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.MANAGER, UserRole.ADMIN)),
+):
+    from app.api.v1.camunda_workflow import get_approval_state
+
+    return await get_approval_state(str(ticket_id), db=db)
+
+
+# 5c. Alias PATCH /api/tickets/{ticket_id}/copilot/reject (CRM-58: Chỉ ENGINEER, MANAGER)
+@router.patch("/{ticket_id}/copilot/reject", status_code=200)
+async def reject_ticket_copilot_alias(
+    ticket_id: str,
+    payload: dict[str, Any] = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.ENGINEER, UserRole.MANAGER)),
+):
+    from pydantic import ValidationError
+    from app.api.v1.camunda_workflow import RejectRequest, _review
+
+    try:
+        parsed = RejectRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors())
+
+    reviewer = parsed.rejected_by or current_user["email"]
+    return await _review(
+        str(ticket_id),
+        approved=False,
+        reviewer=reviewer,
+        reason=parsed.rejection_reason,
+        draft=parsed.draft,
+        db=db,
+    )
+
+
+# 5d. Alias GET /api/tickets/{ticket_id}/copilot/export (CRM-58 + CRM-59)
+@router.get("/{ticket_id}/copilot/export", status_code=200)
+async def export_ticket_copilot_pdf_alias(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(UserRole.STAFF, UserRole.ENGINEER, UserRole.ADMIN)),
+):
+    from app.api.v1.camunda_workflow import export_approved_response
+
+    return await export_approved_response(ticket_id=str(ticket_id), db=db, current_user=current_user)
 
 
 # 6. DELETE /api/tickets/{ticket_id}: Xóa ticket (Chỉ MANAGER, ADMIN)
@@ -527,4 +652,18 @@ async def generate_ticket_copilot_package(
         ticket_id=ticket_id,
         db=db,
     )
+    try:
+        from app.api.v1.camunda_workflow import cache_copilot_package
+        from app.camunda.worker import start_ticket_triage_process
+
+        pkg_dict = package.model_dump(mode="json")
+        cache_copilot_package(str(ticket_id), pkg_dict)
+        await start_ticket_triage_process(
+            ticket_id=str(ticket_id),
+            ticket_description=description,
+            intent=pkg_dict["intent"],
+            is_hazard_escalated=bool(pkg_dict.get("is_hazard_escalated", False)),
+        )
+    except Exception:
+        pass
     return package
