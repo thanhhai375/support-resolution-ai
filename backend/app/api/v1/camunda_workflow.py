@@ -8,12 +8,17 @@ exposes:
 import asyncio
 import logging
 import uuid
+import io
+import re
+from xml.sax.saxutils import escape
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 from app.main import get_db  # imported lazily by app.main.register_backend_components()
 
@@ -205,3 +210,149 @@ async def reject_copilot_draft(ticket_id: str, payload: RejectRequest) -> dict[s
         reason=payload.rejection_reason,
     )
 
+
+
+# --- Official customer response export (CRM-60) ---------------------------------------
+from app.api.deps import get_current_user, require_role
+from models import CopilotPackage, Ticket
+from app.repositories import user_repository
+
+_export_user = require_role("support_agent", "technical_approver", "administrator")
+
+
+def _public_text(value: Any) -> str:
+    """Remove internal identifiers and control characters before customer export."""
+    text_value = str(value or "")
+    text_value = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[đã ẩn]", text_value)
+    text_value = re.sub(r"(?im)^.*(?:system\s*prompt|internal\s*notes?|ghi chú nội bộ|prompt hệ thống).*$", "[đã ẩn]", text_value)
+    text_value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text_value)
+    return text_value.strip()
+
+
+def _citation_public_fields(citation: Any) -> dict[str, str]:
+    """Whitelist customer-safe evidence fields; never serialize arbitrary metadata."""
+    if not isinstance(citation, dict):
+        return {}
+    aliases = {
+        "document": ("document_name", "document_title", "title"),
+        "document_code": ("document_code", "code"),
+        "section": ("section", "section_name", "section_number"),
+        "version": ("version",),
+        "status": ("status",),
+        "page": ("page_number", "page"),
+        "evidence": ("excerpt", "snippet", "content_snippet", "passage_content", "content"),
+        "url": ("url", "source_url"),
+    }
+    result: dict[str, str] = {}
+    for output_key, keys in aliases.items():
+        for key in keys:
+            value = citation.get(key)
+            if value not in (None, ""):
+                if output_key == "url" and not str(value).lower().startswith(("https://", "http://")):
+                    continue
+                result[output_key] = _public_text(value)
+                break
+    return result
+
+
+def _build_customer_pdf(ticket: Ticket, package: CopilotPackage, engineer_name: str) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise HTTPException(status_code=503, detail="PDF export dependency is not installed") from exc
+
+    # Register a Unicode font when available so Vietnamese text renders correctly.
+    font_name = "Helvetica"
+    font_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ]
+    for font_path in font_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("SongNhatUnicode", font_path))
+            font_name = "SongNhatUnicode"
+            break
+        except Exception:
+            continue
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=20*mm, leftMargin=20*mm, topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="SNBody", parent=styles["BodyText"], fontName=font_name, fontSize=9, leading=14, alignment=TA_LEFT, spaceAfter=5))
+    styles.add(ParagraphStyle(name="SNTitle", parent=styles["Title"], fontName=font_name, fontSize=17, leading=22, textColor=colors.HexColor("#17365D")))
+    styles.add(ParagraphStyle(name="SNHeading", parent=styles["Heading2"], fontName=font_name, fontSize=11, leading=15, textColor=colors.HexColor("#17365D"), spaceBefore=9))
+    story = [Paragraph("SONGNHAT", styles["SNTitle"]), Paragraph("PHẢN HỒI HỖ TRỢ KỸ THUẬT CHÍNH THỨC", styles["SNHeading"]), Spacer(1, 5*mm)]
+    ticket_number = _public_text(getattr(ticket, "ticket_number", "")) or str(ticket.id)
+    story.append(Paragraph(f"<b>Mã Ticket:</b> {escape(ticket_number)}", styles["SNBody"]))
+    story.append(Paragraph("<b>Tiêu đề:</b> " + escape(_public_text(ticket.subject)), styles["SNBody"]))
+    story.append(Paragraph("<b>Nội dung hướng dẫn kỹ thuật</b>", styles["SNHeading"]))
+    response_text = _public_text(package.draft_response or package.draft)
+    if not response_text:
+        raise HTTPException(status_code=409, detail="Approved customer response is empty")
+    for paragraph in response_text.splitlines() or [response_text]:
+        if paragraph.strip():
+            story.append(Paragraph(escape(paragraph), styles["SNBody"]))
+
+    story.append(Paragraph("Trích dẫn chứng cứ công khai", styles["SNHeading"]))
+    citations = package.citations if isinstance(package.citations, list) else []
+    safe_citations = [_citation_public_fields(item) for item in citations]
+    safe_citations = [item for item in safe_citations if item]
+    if safe_citations:
+        for index, item in enumerate(safe_citations, 1):
+            bits = []
+            for label in ("document", "document_code", "section", "page", "version", "status", "evidence", "url"):
+                if item.get(label):
+                    bits.append(f"{label}: {item[label]}")
+            story.append(Paragraph(escape(f"{index}. " + " | ".join(bits)), styles["SNBody"]))
+    else:
+        story.append(Paragraph("Không có trích dẫn chứng cứ công khai được lưu cho phản hồi này.", styles["SNBody"]))
+
+    story.append(Spacer(1, 4*mm))
+    story.append(Paragraph("<b>Kỹ sư phê duyệt:</b> " + escape(_public_text(engineer_name)), styles["SNBody"]))
+    story.append(Paragraph("Tài liệu được tạo tự động từ phản hồi đã được phê duyệt trên hệ thống SongNhat.", styles["SNBody"]))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+@approval_router.get("/{ticket_id}/export")
+async def export_approved_response(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(_export_user),
+) -> StreamingResponse:
+    """Export the approved customer-facing response as a sanitized PDF (CRM-60)."""
+    try:
+        parsed_id = uuid.UUID(ticket_id)
+    except ValueError:
+        parsed_id = _to_uuid(ticket_id)
+
+    ticket = (await db.execute(select(Ticket).where(Ticket.id == parsed_id))).scalars().first()
+    package = (await db.execute(select(CopilotPackage).where(CopilotPackage.ticket_id == parsed_id))).scalars().first()
+    if ticket is None or package is None:
+        raise HTTPException(status_code=404, detail="Ticket or Copilot response not found")
+    if str(package.approval_status).upper() != "APPROVED":
+        raise HTTPException(status_code=409, detail="Only approved responses can be exported")
+    if not package.reviewed_by:
+        raise HTTPException(status_code=409, detail="Approval reviewer is missing")
+
+    reviewer = user_repository.get_user_by_email(package.reviewed_by)
+    reviewer_role = (reviewer or {}).get("role", "")
+    if reviewer_role not in {"technical_approver", "ENGINEER", "engineer"}:
+        raise HTTPException(status_code=403, detail="Response must be approved by an ENGINEER")
+    engineer_name = (reviewer or {}).get("full_name") or "Kỹ sư phê duyệt"
+    pdf_bytes = _build_customer_pdf(ticket, package, engineer_name)
+    filename = f"SongNhat_Response_{_public_text(ticket.ticket_number or str(ticket.id))}.pdf"
+    safe_filename = re.sub(r"[^A-Za-z0-9_.-]", "_", filename)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"', "Cache-Control": "no-store"},
+    )

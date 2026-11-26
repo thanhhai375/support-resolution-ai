@@ -111,7 +111,7 @@ def e2e_app(e2e_pg_url):
     # Cho ingestion (psycopg2) và mọi code đọc biến môi trường
     mp.setenv("DATABASE_URL", e2e_pg_url)
 
-    import main  # backend/main.py
+    from app import main  # backend/main.py
 
     test_engine = create_async_engine(async_url, poolclass=NullPool, future=True)
     mp.setattr(main, "engine", test_engine)
