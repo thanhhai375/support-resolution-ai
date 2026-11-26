@@ -380,7 +380,9 @@ async def get_process_status(
                 record["ended"] = bool(info.get("ended", False))
                 record["suspended"] = bool(info.get("suspended", False))
             elif res.status_code == 404:
-                record["status"] = "COMPLETED"
+                record["status"] = (
+                    "REJECTED" if record.get("approval_status") == "REJECTED" else "RESOLVED"
+                )
                 record["ended"] = True
         except Exception:
             pass
@@ -391,7 +393,8 @@ async def get_process_status(
     return record
 
 
-FINAL_PROCESS_STATUSES = {"COMPLETED", "REJECTED"}
+FINAL_PROCESS_STATUSES = {"RESOLVED", "COMPLETED", "REJECTED"}
+APPROVAL_SIGNAL_NAME = "Signal_CopilotApprovalResolved"
 
 
 class ProcessAlreadyReviewedError(Exception):
@@ -404,14 +407,16 @@ async def complete_human_approval(
     approved: bool,
     reviewer: str,
     reason: Optional[str] = None,
+    approved_at: Optional[str] = None,
     camunda_url: Optional[str] = None,
     client: Optional[httpx.AsyncClient] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Complete the pending human User Task of the ticket's BPMN process (CRM-44/CRM-41).
+    """Complete the pending human User Task of the ticket's BPMN process (CRM-44/CRM-58).
 
     Called after a reviewer approves/rejects the Copilot draft. When the process runs on a
-    real Camunda engine, the open user task is completed through the REST API; otherwise
-    the local BPMN state record is advanced to its end state.
+    real Camunda engine, the open user task is completed through the REST API (and the
+    RESOLVED signal is emitted on approval); otherwise the local BPMN state record is
+    advanced to `RESOLVED` (when approved) or `REJECTED` (when rejected).
 
     Returns the updated process record, or None when no process exists for `ticket_id`
     (e.g. `CAMUNDA_URL` was not set when the ticket was analysed).
@@ -426,6 +431,8 @@ async def complete_human_approval(
         )
 
     decision = "APPROVED" if approved else "REJECTED"
+    next_step_status = "RESOLVED" if approved else "REJECTED"
+    completed_ts = approved_at or _now_iso()
     base_url = get_camunda_base_url(camunda_url)
 
     if base_url and record.get("engine_mode") == "camunda_rest":
@@ -434,6 +441,16 @@ async def complete_human_approval(
             client = httpx.AsyncClient(timeout=3.0)
             close_client = True
         try:
+            variables: Dict[str, Any] = {
+                "approval_status": {"value": decision, "type": "String"},
+                "ticket_status": {"value": "RESOLVED" if approved else "IN_PROGRESS", "type": "String"},
+                "workflow_step": {"value": next_step_status, "type": "String"},
+                "reviewed_by": {"value": reviewer, "type": "String"},
+                "reviewed_at": {"value": completed_ts, "type": "String"},
+            }
+            if reason:
+                variables["rejection_reason"] = {"value": reason, "type": "String"}
+
             tasks_res = await client.get(
                 f"{base_url}/task",
                 params={
@@ -443,17 +460,28 @@ async def complete_human_approval(
             )
             tasks_res.raise_for_status()
             for task in tasks_res.json():
-                variables: Dict[str, Any] = {
-                    "approval_status": {"value": decision, "type": "String"},
-                    "reviewed_by": {"value": reviewer, "type": "String"},
-                }
-                if reason:
-                    variables["rejection_reason"] = {"value": reason, "type": "String"}
                 complete_res = await client.post(
                     f"{base_url}/task/{task['id']}/complete",
                     json={"variables": variables},
                 )
                 complete_res.raise_for_status()
+
+            if approved:
+                # Emit BPMN signal notifying listeners that ticket approval reached RESOLVED (CRM-58)
+                try:
+                    await client.post(
+                        f"{base_url}/signal",
+                        json={
+                            "name": APPROVAL_SIGNAL_NAME,
+                            "variables": {
+                                "ticket_id": {"value": key, "type": "String"},
+                                "status": {"value": "RESOLVED", "type": "String"},
+                                "approved_by": {"value": reviewer, "type": "String"},
+                            },
+                        },
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning("Could not complete Camunda user task for %s: %s", key, exc)
             record["camunda_sync_error"] = str(exc)
@@ -463,13 +491,21 @@ async def complete_human_approval(
 
     record["approval_status"] = decision
     record["reviewed_by"] = reviewer
-    if reason:
-        record["rejection_reason"] = reason
-    record["status"] = "COMPLETED" if approved else "REJECTED"
+    if approved:
+        record["approved_by"] = reviewer
+        record["approved_at"] = completed_ts
+    else:
+        record["rejected_by"] = reviewer
+        record["rejected_at"] = completed_ts
+        if reason:
+            record["rejection_reason"] = reason
+    record["status"] = next_step_status
     record["ended"] = True
-    record["current_activity_id"] = "EndEvent_TriageCompleted"
-    record["current_activity_name"] = "Hoàn tất xử lý Ticket"
-    record["completed_at"] = _now_iso()
+    record["current_activity_id"] = "EndEvent_Resolved" if approved else "EndEvent_Rejected"
+    record["current_activity_name"] = (
+        "RESOLVED - Hoàn tất xử lý Ticket" if approved else "REJECTED - Từ chối bản nháp"
+    )
+    record["completed_at"] = completed_ts
     return record
 
 
