@@ -25,15 +25,30 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _clean_camunda_state(monkeypatch: pytest.MonkeyPatch):
+    import app.main as app_main
     from app.api.v1 import camunda_workflow
     from app.main import _copilot_role_guard, get_db
 
     async def _no_db_persist(*args, **kwargs):
         return False
 
+    class _NoOpSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def add(self, *args, **kwargs):
+            pass
+
+        async def commit(self):
+            pass
+
     monkeypatch.delenv("CAMUNDA_URL", raising=False)
     # CRM-40 guards the copilot routes and CRM-44 tests must not need Postgres / a login.
     monkeypatch.setattr(camunda_workflow, "_persist_decision", _no_db_persist)
+    monkeypatch.setattr(app_main, "AsyncSessionLocal", lambda: _NoOpSession())
     app.dependency_overrides[_copilot_role_guard] = lambda: {"role": "STAFF", "email": "test"}
     app.dependency_overrides[camunda_workflow.require_approver_role] = lambda: {
         "role": "ENGINEER",
