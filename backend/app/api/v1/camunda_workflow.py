@@ -20,7 +20,13 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.main import get_db  # imported lazily by app.main.register_backend_components()
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/copilot", tags=["Camunda BPMN & Copilot Workflow"])
+approval_router = APIRouter(prefix="/api/v1/copilot", tags=["Copilot Approval"])
+
+from app.api.deps import get_current_user, require_role as _require_role
+from app.main import get_db  # imported after router objects exist to prevent circular ImportError
 
 from app.camunda.worker import (
     ProcessAlreadyReviewedError,
@@ -29,10 +35,6 @@ from app.camunda.worker import (
     start_ticket_triage_process,
 )
 from app.services.copilot_engine import run_copilot_pipeline
-
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/copilot", tags=["Camunda BPMN & Copilot Workflow"])
 
 
 class CamundaAnalyzeRequest(BaseModel):
@@ -86,8 +88,23 @@ async def get_copilot_process_status(ticket_id: str) -> dict[str, Any]:
     return record
 
 
-# --- Approval API (requested by CRM-41, implemented under CRM-44) -------------------------
-approval_router = APIRouter(prefix="/api/v1/copilot", tags=["Copilot Approval"])
+# --- Approval API (requested by CRM-41, implemented under CRM-44, RBAC added in CRM-69) ---
+_CRM40_ROLE_TO_LEGACY = {
+    "STAFF": "support_agent",
+    "ENGINEER": "technical_approver",
+    "MANAGER": "knowledge_steward",
+    "ADMIN": "administrator",
+}
+_approver_access = _require_role("technical_approver", "knowledge_steward")
+
+
+def require_approver_role(current_user: dict = Depends(get_current_user)) -> dict:
+    """Require ENGINEER or MANAGER (legacy: technical_approver / knowledge_steward)."""
+    normalized_user = dict(current_user)
+    raw_role = getattr(normalized_user.get("role"), "value", normalized_user.get("role"))
+    role_str = str(raw_role).strip() if raw_role is not None else ""
+    normalized_user["role"] = _CRM40_ROLE_TO_LEGACY.get(role_str.upper(), role_str.lower())
+    return _approver_access(normalized_user)
 
 
 class ApproveRequest(BaseModel):
@@ -195,18 +212,26 @@ async def _review(
 
 
 @approval_router.patch("/{ticket_id}/approve")
-async def approve_copilot_draft(ticket_id: str, payload: ApproveRequest) -> dict[str, Any]:
+async def approve_copilot_draft(
+    ticket_id: str,
+    payload: ApproveRequest,
+    current_user: dict = Depends(require_approver_role),
+) -> dict[str, Any]:
     """APPROVED + `approved_by`; completes the Camunda `Task_HumanApproval` user task."""
     return await _review(ticket_id, approved=True, reviewer=payload.approved_by, reason=None)
 
 
 @approval_router.patch("/{ticket_id}/reject")
-async def reject_copilot_draft(ticket_id: str, payload: RejectRequest) -> dict[str, Any]:
+async def reject_copilot_draft(
+    ticket_id: str,
+    payload: RejectRequest,
+    current_user: dict = Depends(require_approver_role),
+) -> dict[str, Any]:
     """REJECTED + `rejection_reason`; ends the Camunda process as rejected."""
     return await _review(
         ticket_id,
         approved=False,
-        reviewer=payload.rejected_by or "unknown",
+        reviewer=payload.rejected_by or current_user.get("email") or "unknown",
         reason=payload.rejection_reason,
     )
 
@@ -356,3 +381,15 @@ async def export_approved_response(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{safe_filename}"', "Cache-Control": "no-store"},
     )
+
+
+# If `camunda_workflow` was imported before `app.main`, `register_backend_components()` ran
+# before routes were attached to `router` / `approval_router`; mount them now.
+import app.main as _app_main  # noqa: E402
+
+if _app_main._backend_components_registered and "/api/v1/copilot/{ticket_id}/approve" not in {
+    getattr(r, "path", "") for r in _app_main.app.routes
+}:
+    _app_main.app.include_router(router, dependencies=[Depends(_app_main._copilot_role_guard)])
+    _app_main.app.include_router(approval_router)
+

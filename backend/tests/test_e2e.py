@@ -178,6 +178,7 @@ def test_flow3_approval_status_persisted_as_approved(e2e_client, e2e_tokens, e2e
     approved = e2e_client.patch(
         f"/api/v1/copilot/{ticket_id}/approve",
         json={"approved_by": e2e_users["engineer"]["email"]},
+        headers=e2e_tokens["engineer"],
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["approval_status"] == "APPROVED"
@@ -187,11 +188,6 @@ def test_flow3_approval_status_persisted_as_approved(e2e_client, e2e_tokens, e2e
     assert after[0][0].upper() == "APPROVED"
 
 
-@pytest.mark.xfail(
-    reason="BUG CANDIDATE: PATCH /api/v1/copilot/{id}/approve chưa yêu cầu đăng nhập/role "
-    "(approval_router không có Depends(require_role)). Bỏ xfail khi đã sửa.",
-    strict=True,
-)
 def test_flow3_approve_without_token_should_be_rejected(e2e_client):
     res = e2e_client.patch(
         f"/api/v1/copilot/{uuid.uuid4()}/approve",
