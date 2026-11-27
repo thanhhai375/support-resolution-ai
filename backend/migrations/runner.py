@@ -353,6 +353,17 @@ async def run_migrations(engine: Any) -> None:
                     "ALTER TABLE copilot_packages ADD CONSTRAINT chk_copilot_approval_status "
                     "CHECK (UPPER(approval_status) IN ('PENDING', 'APPROVED', 'REJECTED'))"
                 ))
+                # CRM-61: add telemetry, grounding, and budget hold columns safely.
+                for ddl in (
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS model_version VARCHAR(100)",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(100)",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS token_usage JSONB DEFAULT '{}'::jsonb",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS package_status VARCHAR(30) DEFAULT 'COMPLETED'",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS hold_reason TEXT",
+                    "ALTER TABLE copilot_packages ADD COLUMN IF NOT EXISTS grounding_score DOUBLE PRECISION",
+                ):
+                    await conn.execute(text(ddl))
             logger.info("Hoàn tất migration 002: pg_trgm & idx_knowledge_passages_content_trgm thành công!")
         else:
             # SQLite hoặc cơ sở dữ liệu thử nghiệm khác

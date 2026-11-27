@@ -1,22 +1,165 @@
-"""Knowledge Base Retriever service for technical knowledge full-text search (Tasks CRM-24, CRM-28 & CRM-43)."""
+"""Knowledge Base Retriever service for hybrid keyword + vector search (Tasks CRM-24, CRM-28, CRM-43 & CRM-61)."""
 
+from collections import Counter
 import inspect
 import logging
+import math
 import re
-from typing import Any, List, Optional
+import unicodedata
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from app.schemas.copilot import CitationItem
 
 logger = logging.getLogger(__name__)
 
-# Stopwords tiếng Việt thường gặp trong câu hỏi / mô tả ticket
+MAX_RETRIEVED_PASSAGES = 10
+KEYWORD_WEIGHT = 0.60
+VECTOR_WEIGHT = 0.40
+MIN_HYBRID_SCORE = 0.06
+
+# Stopwords tiếng Việt & tiếng Anh thường gặp trong câu hỏi / mô tả ticket
 VI_STOPWORDS = {
     "là", "và", "của", "có", "cho", "với", "trong", "các", "những", "khi",
     "này", "đó", "thì", "bị", "được", "xin", "giúp", "tôi", "mình", "nhé",
     "ạ", "vui", "lòng", "như", "thế", "nào", "gì", "sao", "ở", "tại", "về",
-    "hay", "hoặc", "cần", "phải", "đang", "đã", "sẽ", "được", "ra", "vào",
+    "hay", "hoặc", "cần", "phải", "đang", "đã", "sẽ", "ra", "vào", "the",
+    "and", "for", "with", "that", "this", "from", "when", "after", "into",
 }
+
+# Từ điển khái niệm kỹ thuật song ngữ (Domain Concept Expansion cho Vector & Hybrid Search)
+DOMAIN_SYNONYM_GROUPS: Dict[str, List[str]] = {
+    "concept_overcurrent": [
+        "qua dong", "quá dòng", "overcurrent", "over current", "ngan mach", "ngắn mạch",
+        "powerstack", "cham dat", "chạm đất", "f0022", "2310", "e001", "e-01", "current limit",
+    ],
+    "concept_overheat": [
+        "qua nhiet", "quá nhiệt", "overheat", "thermal", "nhiet do", "nhiệt độ",
+        "nong", "nóng", "155", "class f", "ptc", "95°c", "quat lam mat", "quạt làm mát",
+    ],
+    "concept_bearing": [
+        "vong bi", "vòng bi", "o bi", "ổ bi", "bac dan", "bạc đạn", "bearing",
+        "rung", "vibration", "lubrication", "boi tron", "bôi trơn", "mo", "mỡ", "grease", "2.8 mm/s",
+    ],
+    "concept_insulation": [
+        "cach dien", "cách điện", "insulation", "megohmmeter", "stator", "500vdc", "1 mω",
+    ],
+    "concept_wiring": [
+        "dau noi", "đấu nối", "so do", "sơ đồ", "wiring", "connection", "terminal",
+        "star/delta", "sao tam giac", "mach dong luc", "mạch động lực", "di0", "cn5",
+    ],
+    "concept_comm": [
+        "truyen thong", "truyền thông", "communication", "modbus", "rs485", "plc",
+        "baud", "f0001", "120 ohm", "slave", "mat tin hieu", "mất tín hiệu",
+    ],
+    "concept_accel": [
+        "tang toc", "tăng tốc", "acceleration", "ramp", "p1120", "23.12", "quan tinh", "quán tính",
+    ],
+    "concept_pid": [
+        "pid", "p2200", "p2253", "p2264", "kp", "dao dong", "vong lap", "vòng lặp", "setpoint", "4-20ma",
+    ],
+    "concept_encoder": [
+        "encoder", "abz", "ppr", "1024", "2500", "shielded", "alignment", "can chinh truc",
+    ],
+    "concept_overvoltage": [
+        "qua ap", "quá áp", "overvoltage", "dc bus", "3210", "a0505", "dien tro xa",
+    ],
+    "concept_start_fail": [
+        "khong khoi dong", "không khởi động", "fails to start", "khong chay", "380v", "pha",
+    ],
+    "concept_setup": [
+        "cai dat", "cài đặt", "tham so", "tham số", "parameter", "auto-tune", "p1910", "p0304",
+    ],
+    "concept_motor": ["dong co", "động cơ", "motor", "motors", "servo"],
+    "concept_drive": ["bien tan", "biến tần", "drive", "drives", "inverter"],
+    "concept_warranty": ["tien do", "tiến độ", "bao hanh", "bảo hành", "sua chua", "sửa chữa", "phieu dich vu"],
+}
+
+
+def _strip_accents(text: str) -> str:
+    """Chuẩn hóa chuỗi tiếng Việt về không dấu để tăng độ phủ tìm kiếm."""
+    replaced = text.replace("đ", "d").replace("Đ", "D")
+    nfkd = unicodedata.normalize("NFD", replaced)
+    return "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn")
+
+
+def _normalize_for_match(text: str) -> str:
+    """Chuẩn hóa chữ thường và loại bỏ dấu tiếng Việt."""
+    return _strip_accents((text or "").lower()).strip()
+
+
+def _tokenize_with_concepts(text: str) -> List[str]:
+    """Tách token chuẩn hóa kèm mở rộng khái niệm kỹ thuật song ngữ."""
+    norm = _normalize_for_match(text)
+    raw_tokens = re.findall(r"[a-z0-9]+(?:[.\-_/][a-z0-9]+)*", norm)
+    tokens: List[str] = []
+    for tok in raw_tokens:
+        if len(tok) < 2:
+            continue
+        if tok in VI_STOPWORDS:
+            continue
+        tokens.append(tok)
+        # Thêm biến thể bỏ gạch nối cho mã lỗi (e-01 -> e01, sn-g120 -> sng120)
+        if "-" in tok:
+            compact = tok.replace("-", "")
+            if len(compact) >= 3:
+                tokens.append(compact)
+
+    # Thêm bigram cho từ khóa liên tiếp
+    bigrams = [f"{tokens[i]}_{tokens[i + 1]}" for i in range(len(tokens) - 1)]
+    tokens.extend(bigrams)
+
+    # Mở rộng domain concepts
+    for concept, triggers in DOMAIN_SYNONYM_GROUPS.items():
+        if any(_normalize_for_match(t) in norm for t in triggers):
+            tokens.append(concept)
+
+    return tokens
+
+
+def _char_trigrams(text: str) -> set[str]:
+    """Tạo tập 3-gram ký tự (mô phỏng pg_trgm offline)."""
+    norm = re.sub(r"\s+", " ", _normalize_for_match(text))
+    if len(norm) < 3:
+        return {norm} if norm else set()
+    return {norm[i : i + 3] for i in range(len(norm) - 2)}
+
+
+def _trigram_similarity(a: str, b: str) -> float:
+    """Tính độ tương đồng Dice/Jaccard trên tập 3-gram ký tự."""
+    ta = _char_trigrams(a)
+    tb = _char_trigrams(b)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    return (2.0 * inter) / (len(ta) + len(tb))
+
+
+def _cosine_similarity(vec_a: Dict[str, float], vec_b: Dict[str, float]) -> float:
+    """Tính cosine similarity giữa hai vector thưa."""
+    if not vec_a or not vec_b:
+        return 0.0
+    common = set(vec_a.keys()) & set(vec_b.keys())
+    if not common:
+        return 0.0
+    dot = sum(vec_a[k] * vec_b[k] for k in common)
+    norm_a = math.sqrt(sum(v * v for v in vec_a.values()))
+    norm_b = math.sqrt(sum(v * v for v in vec_b.values()))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _dense_cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    """Tính cosine similarity cho embedding vector dày (dense float list)."""
+    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+        return 0.0
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(a * a for a in vec_a))
+    norm_b = math.sqrt(sum(b * b for b in vec_b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return max(0.0, dot / (norm_a * norm_b))
 
 
 def extract_search_tokens(query: str) -> dict[str, List[str]]:
@@ -256,6 +399,7 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
     if any(k in query_lower for k in ["f0022", "biến tần", "tăng tốc", "inverter"]):
         return [
             CitationItem(
+                passage_id="mock-sn-g120-p142",
                 document_title="Tài liệu Hướng dẫn Xử lý Lỗi Biến tần SongNhat SN-G120",
                 page_number=142,
                 content_snippet=(
@@ -265,8 +409,12 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="5.2 - Mã lỗi phần cứng và quá dòng",
                 version="v2.4",
+                revision="v2.4",
+                status="current",
+                effective_date="2025-01-01",
             ),
             CitationItem(
+                passage_id="mock-maint-p58",
                 document_title="Sổ tay Bảo trì & Chẩn đoán Sự cố Truyền động Điện",
                 page_number=58,
                 content_snippet=(
@@ -276,8 +424,12 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="3.4 - Quy trình đo cách điện",
                 version="Rev. C (2024)",
+                revision="Rev. C (2024)",
+                status="current",
+                effective_date="2024-06-01",
             ),
             CitationItem(
+                passage_id="mock-sop-tech-04-p12",
                 document_title="Quy trình Thu thập Dữ kiện Kỹ thuật SongNhat (SOP-TECH-04)",
                 page_number=12,
                 content_snippet=(
@@ -287,12 +439,16 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="2.1 - Thu thập dữ liệu lỗi biến tần",
                 version="v1.2",
+                revision="v1.2",
+                status="current",
+                effective_date="2024-03-01",
             ),
         ]
 
     if any(k in query_lower for k in ["tài liệu", "manual", "sơ đồ", "hướng dẫn", "catalog", "datasheet"]):
         return [
             CitationItem(
+                passage_id="mock-sn-g120-p15",
                 document_title="Tài liệu Hướng dẫn Vận hành & Cài đặt Biến tần SongNhat SN-G120",
                 page_number=15,
                 content_snippet=(
@@ -301,8 +457,12 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="2.2 - Sơ đồ đấu nối",
                 version="v1.5",
+                revision="v1.5",
+                status="current",
+                effective_date="2025-01-01",
             ),
             CitationItem(
+                passage_id="mock-wiring-p32",
                 document_title="Sơ đồ Đấu nối Điều khiển và Động lực Hệ thống Tự động hóa SongNhat",
                 page_number=32,
                 content_snippet=(
@@ -311,12 +471,16 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="1.4 - Bản vẽ nguyên lý",
                 version="v1.0",
+                revision="v1.0",
+                status="current",
+                effective_date="2024-01-01",
             ),
         ]
 
     if any(k in query_lower for k in ["tiến độ", "bảo hành", "sửa", "dịch vụ"]):
         return [
             CitationItem(
+                passage_id="mock-service-p8",
                 document_title="Quy trình Tiếp nhận Dịch vụ & Tra cứu Tiến độ Sửa chữa SongNhat",
                 page_number=8,
                 content_snippet=(
@@ -325,8 +489,12 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="1.1 - Tiếp nhận dịch vụ",
                 version="v2.0",
+                revision="v2.0",
+                status="current",
+                effective_date="2025-01-01",
             ),
             CitationItem(
+                passage_id="mock-warranty-p14",
                 document_title="Chính sách Bảo hành & Thời hạn Trả máy Thiết bị Tự động hóa",
                 page_number=14,
                 content_snippet=(
@@ -335,11 +503,15 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
                 ),
                 section="2.3 - Thời hạn xử lý",
                 version="Rev. 2025",
+                revision="Rev. 2025",
+                status="current",
+                effective_date="2025-01-01",
             ),
         ]
 
     return [
         CitationItem(
+            passage_id="mock-handbook-p24",
             document_title="Cẩm nang Kỹ thuật Thiết bị Tự động hóa SongNhat",
             page_number=24,
             content_snippet=(
@@ -348,8 +520,12 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
             ),
             section="General",
             version="v1.0",
+            revision="v1.0",
+            status="current",
+            effective_date="2024-01-01",
         ),
         CitationItem(
+            passage_id="mock-support-p9",
             document_title="Quy trình Hỗ trợ Kỹ thuật & Bảo hành SongNhat",
             page_number=9,
             content_snippet=(
@@ -358,12 +534,23 @@ def get_mock_knowledge_passages(query: str) -> List[CitationItem]:
             ),
             section="General",
             version="v1.0",
+            revision="v1.0",
+            status="current",
+            effective_date="2024-01-01",
         ),
     ]
 
 
 class KnowledgeRetriever:
-    """Class quản lý truy xuất đoạn văn bản kiến thức từ bảng `knowledge_passages` (Task CRM-43)."""
+    """Class quản lý truy xuất Hybrid Keyword + Vector từ bảng `knowledge_passages` (Tasks CRM-43 & CRM-61)."""
+
+    def _passage_text_fields(self, passage: Any) -> Tuple[str, str, str, str]:
+        """Trích xuất (doc_name, sec_name, content, doc_code) dạng chữ thường."""
+        content = (getattr(passage, "passage_content", None) or getattr(passage, "content_snippet", None) or "").lower()
+        doc_name = (getattr(passage, "document_name", None) or getattr(passage, "document_title", None) or "").lower()
+        sec_name = (getattr(passage, "section_name", None) or getattr(passage, "section", None) or "").lower()
+        doc_code = (getattr(passage, "document_code", None) or "").lower()
+        return doc_name, sec_name, content, doc_code
 
     def _score_passage(
         self,
@@ -373,43 +560,125 @@ class KnowledgeRetriever:
         phrases: List[str],
         keywords: List[str],
     ) -> float:
-        """Tính điểm độ liên quan (Relevance Score) của đoạn trích đối với câu truy vấn."""
+        """Tính điểm từ khóa có trọng số (exact code/model/unit + BM25-like TF + trigram)."""
         score = 0.0
-        content = (getattr(passage, "passage_content", "") or "").lower()
-        doc_name = (getattr(passage, "document_name", "") or "").lower()
-        sec_name = (getattr(passage, "section_name", "") or "").lower()
-        full_text = f"{doc_name} {sec_name} {content}"
+        doc_name, sec_name, content, doc_code = self._passage_text_fields(passage)
+        meta = getattr(passage, "passage_metadata", None)
+        meta_model = str(meta.get("product_model") or meta.get("model") or "").lower() if isinstance(meta, dict) else ""
+        full_text = f"{doc_name} {doc_code} {sec_name} {meta_model} {content}"
+        norm_full = _normalize_for_match(full_text)
+        norm_content = _normalize_for_match(content)
+        norm_doc = _normalize_for_match(f"{doc_name} {doc_code} {meta_model}")
+        norm_sec = _normalize_for_match(sec_name)
 
-        # 1. Điểm cộng rất cao cho khớp mã lỗi / model đặc thù (e.g. F0022, SD700, 2310, E001)
+        # 1. Điểm cộng rất cao cho khớp mã lỗi / model / đơn vị đặc thù
         for code in codes:
             c_low = code.lower()
-            if c_low in full_text:
-                score += 15.0
-                if c_low in content:
+            c_norm = _normalize_for_match(c_low)
+            c_compact = c_norm.replace("-", "")
+            if c_low in full_text or c_norm in norm_full:
+                score += 18.0
+                if c_low in content or c_norm in norm_content:
                     score += 10.0
-                if c_low in doc_name:
+                if c_low in doc_name or c_norm in norm_doc:
                     score += 8.0
+            elif len(c_compact) >= 3 and c_compact in norm_full.replace("-", ""):
+                score += 10.0
 
-        # 2. Khớp cụm từ kỹ thuật đặc trưng (e.g. "biến tần", "quá dòng", "sơ đồ đấu nối")
+        # 2. Khớp cụm từ kỹ thuật đặc trưng (có dấu và không dấu)
         for ph in phrases:
-            if ph in full_text:
-                score += 5.0
-                if ph in content:
-                    score += 3.0
+            ph_norm = _normalize_for_match(ph)
+            if ph in full_text or ph_norm in norm_full:
+                score += 6.0
+                if ph in content or ph_norm in norm_content:
+                    score += 3.5
 
-        # 3. Khớp các từ khóa đơn lẻ
+        # 3. BM25-like saturated term frequency across weighted fields
+        k1 = 1.2
+        content_len = max(len(norm_content.split()), 1)
+        length_norm = 1.0 - 0.35 + 0.35 * min(content_len / 45.0, 2.0)
         for kw in keywords:
             kw_low = kw.lower()
-            if kw_low in content:
-                score += 2.0
-            if kw_low in doc_name:
-                score += 2.0
+            kw_norm = _normalize_for_match(kw_low)
+            tf_content = norm_content.count(kw_norm) if kw_norm else 0
+            tf_doc = norm_doc.count(kw_norm) if kw_norm else 0
+            tf_sec = norm_sec.count(kw_norm) if kw_norm else 0
+            weighted_tf = tf_content + 1.8 * tf_doc + 1.4 * tf_sec
+            if weighted_tf > 0:
+                bm25_tf = (weighted_tf * (k1 + 1.0)) / (weighted_tf + k1 * length_norm)
+                score += 3.0 * bm25_tf
 
         # 4. Khớp trực tiếp một phần câu truy vấn
-        if query.lower() in full_text:
+        norm_query = _normalize_for_match(query)
+        if norm_query and norm_query in norm_full:
             score += 10.0
 
+        # 5. Trigram similarity (offline pg_trgm equivalent)
+        score += 10.0 * _trigram_similarity(query, f"{doc_name} {sec_name} {content}")
+
         return score
+
+    def _compute_hybrid_scores(
+        self,
+        passages: List[Any],
+        query: str,
+        codes: List[str],
+        phrases: List[str],
+        keywords: List[str],
+        query_embedding: Optional[List[float]] = None,
+    ) -> List[Tuple[Any, float]]:
+        """Kết hợp Keyword Score (BM25/exact/trigram) và Vector Score (TF-IDF/Concept Cosine)."""
+        if not passages:
+            return []
+
+        corpus_tokens: List[List[str]] = []
+        df: Counter[str] = Counter()
+        for p in passages:
+            doc_name, sec_name, content, doc_code = self._passage_text_fields(p)
+            # Tăng trọng số document_name và section_name trong vector TF-IDF
+            combined = f"{doc_name} {doc_name} {doc_code} {sec_name} {content}"
+            toks = _tokenize_with_concepts(combined)
+            corpus_tokens.append(toks)
+            for t in set(toks):
+                df[t] += 1
+
+        n_docs = len(passages)
+        query_toks = _tokenize_with_concepts(query)
+        for t in set(query_toks):
+            df[t] += 1
+
+        def _to_tfidf_vec(toks: List[str]) -> Dict[str, float]:
+            tf = Counter(toks)
+            total = max(len(toks), 1)
+            vec: Dict[str, float] = {}
+            for term, count in tf.items():
+                idf = math.log((n_docs + 2.0) / (df.get(term, 0) + 1.0)) + 1.0
+                weight = (1.0 + math.log(count)) / math.sqrt(total) * idf
+                if term.startswith("concept_"):
+                    weight *= 1.6
+                vec[term] = weight
+            return vec
+
+        query_vec = _to_tfidf_vec(query_toks)
+        scored: List[Tuple[Any, float]] = []
+
+        for idx, p in enumerate(passages):
+            kw_raw = self._score_passage(p, query, codes, phrases, keywords)
+            kw_norm = kw_raw / (kw_raw + 15.0) if kw_raw > 0 else 0.0
+
+            doc_vec = _to_tfidf_vec(corpus_tokens[idx])
+            vec_score = _cosine_similarity(query_vec, doc_vec)
+
+            meta = getattr(p, "passage_metadata", None)
+            if query_embedding and isinstance(meta, dict) and isinstance(meta.get("embedding"), list):
+                dense_sim = _dense_cosine_similarity(query_embedding, meta["embedding"])
+                vec_score = 0.5 * vec_score + 0.5 * dense_sim
+
+            hybrid_score = KEYWORD_WEIGHT * kw_norm + VECTOR_WEIGHT * vec_score
+            scored.append((p, hybrid_score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored
 
     async def _search_postgres(
         self,
@@ -421,7 +690,7 @@ class KnowledgeRetriever:
         limit: int,
         product_id: Optional[Any] = None,
     ) -> List[Any]:
-        """Truy vấn Full-text Search trên PostgreSQL sử dụng pg_trgm + GIN index."""
+        """Truy vấn Full-text Search trên PostgreSQL sử dụng pg_trgm + Hybrid Rerank."""
         try:
             from models import KnowledgePassage
         except ImportError:
@@ -430,7 +699,7 @@ class KnowledgeRetriever:
         from sqlalchemy import desc, func, or_, select
 
         filters = []
-        all_terms = list(dict.fromkeys(codes + phrases + keywords[:5]))
+        all_terms = list(dict.fromkeys(codes + phrases + keywords[:8]))
         for term in all_terms:
             pattern = f"%{term}%"
             filters.append(KnowledgePassage.passage_content.ilike(pattern))
@@ -453,13 +722,32 @@ class KnowledgeRetriever:
         if product_id is not None:
             stmt = stmt.where(KnowledgePassage.product_id == product_id)
 
-        stmt = stmt.order_by(order_clause).limit(limit * 2)
+        candidate_limit = max(limit * 4, 30)
+        stmt = stmt.order_by(order_clause).limit(candidate_limit)
 
         result = db.execute(stmt)
         if inspect.isawaitable(result):
             result = await result
 
-        return result.scalars().all() if hasattr(result, "scalars") else result.fetchall()
+        raw_passages = list(result.scalars().all() if hasattr(result, "scalars") else result.fetchall())
+        if len(raw_passages) < limit:
+            broad_stmt = select(KnowledgePassage).where(KnowledgePassage.is_approved.is_(True))
+            if product_id is not None:
+                broad_stmt = broad_stmt.where(KnowledgePassage.product_id == product_id)
+            broad_stmt = broad_stmt.limit(200)
+            broad_res = db.execute(broad_stmt)
+            if inspect.isawaitable(broad_res):
+                broad_res = await broad_res
+            broad_rows = broad_res.scalars().all() if hasattr(broad_res, "scalars") else broad_res.fetchall()
+            seen_ids = {getattr(p, "id", id(p)) for p in raw_passages}
+            for row in broad_rows:
+                rid = getattr(row, "id", id(row))
+                if rid not in seen_ids:
+                    raw_passages.append(row)
+                    seen_ids.add(rid)
+
+        ranked = self._compute_hybrid_scores(raw_passages, query, codes, phrases, keywords)
+        return [p for p, score in ranked if score >= MIN_HYBRID_SCORE]
 
     async def _search_generic(
         self,
@@ -471,7 +759,7 @@ class KnowledgeRetriever:
         limit: int,
         product_id: Optional[Any] = None,
     ) -> List[Any]:
-        """Truy vấn đa từ khóa cho SQLite / Dialect khác với thuật toán ranking."""
+        """Truy vấn đa từ khóa + Hybrid Vector Rerank cho SQLite / Dialect khác."""
         try:
             from models import KnowledgePassage
         except ImportError:
@@ -480,7 +768,7 @@ class KnowledgeRetriever:
         from sqlalchemy import or_, select
 
         filters = []
-        all_terms = list(dict.fromkeys(codes + phrases + keywords[:6]))
+        all_terms = list(dict.fromkeys(codes + phrases + keywords[:8]))
         if not all_terms:
             all_terms = [query.strip()]
 
@@ -502,14 +790,27 @@ class KnowledgeRetriever:
         if inspect.isawaitable(result):
             result = await result
 
-        raw_passages = result.scalars().all() if hasattr(result, "scalars") else result.fetchall()
+        raw_passages = list(result.scalars().all() if hasattr(result, "scalars") else result.fetchall())
 
-        scored = [
-            (p, self._score_passage(p, query, codes, phrases, keywords))
-            for p in raw_passages
-        ]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [p for p, s in scored]
+        # Mở rộng tập ứng viên trong DB khi truy vấn đồng nghĩa/không dấu làm SQL ILIKE trả về ít kết quả
+        if len(raw_passages) < max(limit * 2, 10):
+            broad_stmt = select(KnowledgePassage).where(KnowledgePassage.is_approved.is_(True))
+            if product_id is not None:
+                broad_stmt = broad_stmt.where(KnowledgePassage.product_id == product_id)
+            broad_stmt = broad_stmt.limit(500)
+            broad_res = db.execute(broad_stmt)
+            if inspect.isawaitable(broad_res):
+                broad_res = await broad_res
+            broad_rows = broad_res.scalars().all() if hasattr(broad_res, "scalars") else broad_res.fetchall()
+            seen_ids = {getattr(p, "id", id(p)) for p in raw_passages}
+            for row in broad_rows:
+                rid = getattr(row, "id", id(row))
+                if rid not in seen_ids:
+                    raw_passages.append(row)
+                    seen_ids.add(rid)
+
+        ranked = self._compute_hybrid_scores(raw_passages, query, codes, phrases, keywords)
+        return [p for p, score in ranked if score >= MIN_HYBRID_SCORE]
 
     async def search_knowledge_passages(
         self,
@@ -550,12 +851,14 @@ class KnowledgeRetriever:
             logger.info("CRM-51: Chỉ có serial chưa có bảng liên kết model (MODEL-02). Dừng truy xuất.")
             return []
 
+        effective_limit = max(1, min(int(limit or 3), MAX_RETRIEVED_PASSAGES))
+
         if db is None:
             logger.debug("DB session is None, fallback sang mock data.")
             # Kiểm tra xem mock data có khớp ràng buộc không
             mock_items = get_mock_knowledge_passages(query)
             applicable_mocks = [c for c in mock_items if is_passage_applicable(c, constraints)]
-            return applicable_mocks[:limit]
+            return applicable_mocks[:effective_limit]
 
         try:
             tokens = extract_search_tokens(query)
@@ -583,7 +886,7 @@ class KnowledgeRetriever:
                         codes=codes,
                         phrases=phrases,
                         keywords=keywords,
-                        limit=limit * 2,
+                        limit=effective_limit * 2,
                         product_id=product_id,
                     )
                 except Exception as pg_exc:
@@ -594,7 +897,7 @@ class KnowledgeRetriever:
                         codes=codes,
                         phrases=phrases,
                         keywords=keywords,
-                        limit=limit * 2,
+                        limit=effective_limit * 2,
                         product_id=product_id,
                     )
             else:
@@ -604,7 +907,7 @@ class KnowledgeRetriever:
                     codes=codes,
                     phrases=phrases,
                     keywords=keywords,
-                    limit=limit * 2,
+                    limit=effective_limit * 2,
                     product_id=product_id,
                 )
 
@@ -617,7 +920,7 @@ class KnowledgeRetriever:
                     codes=codes,
                     phrases=phrases,
                     keywords=keywords,
-                    limit=limit * 2,
+                    limit=effective_limit * 2,
                     product_id=None,
                 )
 
@@ -626,7 +929,7 @@ class KnowledgeRetriever:
 
             if applicable_passages:
                 citations: List[CitationItem] = []
-                for p in applicable_passages[:limit]:
+                for p in applicable_passages[:effective_limit]:
                     doc_title = (
                         getattr(p, "document_title", None)
                         or getattr(p, "document_name", None)
@@ -648,11 +951,20 @@ class KnowledgeRetriever:
                         if isinstance(getattr(p, "passage_metadata", None), dict)
                         else {}
                     )
-                    version = (
+                    raw_revision = (
+                        getattr(p, "revision", None)
+                        or meta.get("revision")
+                        or getattr(p, "version", None)
+                        or meta.get("version")
+                        or meta.get("doc_version")
+                        or "v1.0"
+                    )
+                    revision_str = str(raw_revision)
+                    version_str = str(
                         getattr(p, "version", None)
                         or meta.get("version")
-                        or meta.get("revision")
-                        or "v1.0"
+                        or meta.get("doc_version")
+                        or revision_str
                     )
                     doc_code = getattr(p, "document_code", None) or meta.get("document_code")
                     passage_id = str(p.id) if getattr(p, "id", None) else None
@@ -661,6 +973,42 @@ class KnowledgeRetriever:
                         or meta.get("effective_status")
                         or meta.get("status")
                         or ("current" if getattr(p, "is_approved", False) else "draft")
+                    )
+                    approved_at_val = getattr(p, "approved_at", None) or meta.get("approved_at")
+                    if hasattr(approved_at_val, "date"):
+                        approved_at_str = approved_at_val.date().isoformat()
+                    elif approved_at_val:
+                        approved_at_str = str(approved_at_val)[:10]
+                    else:
+                        approved_at_str = None
+                    effective_date_val = (
+                        getattr(p, "effective_date", None)
+                        or meta.get("effective_date")
+                        or approved_at_str
+                    )
+                    deep_link_val = (
+                        getattr(p, "deep_link", None)
+                        or meta.get("deep_link")
+                        or meta.get("url")
+                        or meta.get("document_url")
+                    )
+                    explicit_stable_ref = (
+                        getattr(p, "stable_ref", None)
+                        or meta.get("stable_ref")
+                    )
+                    stable_ref_val = (
+                        str(explicit_stable_ref)
+                        if explicit_stable_ref
+                        else (
+                            None
+                            if deep_link_val
+                            else f"{doc_title} | Rev {revision_str} | Mục {section or 'General'} | Trang {int(page_num)}"
+                        )
+                    )
+                    supersession_ref_val = (
+                        getattr(p, "supersession_ref", None)
+                        or meta.get("supersession_ref")
+                        or meta.get("supersession_link")
                     )
                     product_model_val = (
                         getattr(p, "product_model", None)
@@ -678,10 +1026,15 @@ class KnowledgeRetriever:
                             page_number=int(page_num),
                             content_snippet=str(snippet),
                             section=str(section) if section else None,
-                            version=str(version) if version else None,
+                            version=version_str,
+                            revision=revision_str,
                             passage_id=passage_id,
                             document_code=str(doc_code) if doc_code else None,
                             status=str(status_val) if status_val else None,
+                            effective_date=str(effective_date_val) if effective_date_val else None,
+                            deep_link=str(deep_link_val) if deep_link_val else None,
+                            stable_ref=stable_ref_val,
+                            supersession_ref=str(supersession_ref_val) if supersession_ref_val else None,
                             product_model=str(product_model_val) if product_model_val else None,
                             serial_range=str(serial_range_val) if serial_range_val else None,
                         )
@@ -697,7 +1050,7 @@ class KnowledgeRetriever:
         # trừ khi allow_mock_fallback=True (chỉ dùng cho unit test cũ).
         if allow_mock_fallback:
             logger.info("Fallback sang mock data vì allow_mock_fallback=True.")
-            return get_mock_knowledge_passages(query)[:limit]
+            return get_mock_knowledge_passages(query)[:effective_limit]
 
         return []
 
