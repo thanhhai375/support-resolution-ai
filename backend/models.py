@@ -7,6 +7,7 @@ from sqlalchemy import (
     Text,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     JSON,
@@ -199,6 +200,14 @@ class CopilotPackage(Base):
     reviewed_by = Column(String(150), nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     review_note = Column(Text, nullable=True)
+    # CRM-61: Telemetry, Grounding & Token Budget Hold metadata
+    model_version = Column(String(100), nullable=True)
+    prompt_version = Column(String(100), nullable=True)
+    token_usage = Column(JSON, default=dict, nullable=True)
+    latency_ms = Column(Float, nullable=True)
+    package_status = Column(String(30), nullable=True, default="COMPLETED")
+    hold_reason = Column(Text, nullable=True)
+    grounding_score = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
