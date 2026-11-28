@@ -57,6 +57,7 @@ function normalizeTicket(raw: unknown, index: number): Ticket {
   const responseTime = raw.responseTimeMinutes
   return {
     id: String(raw.ticket_number ?? raw.id ?? raw.ticketId ?? raw.caseId ?? `TK-${index + 1}`),
+    backendId: typeof raw.id === 'string' ? raw.id : undefined,
     title: String(raw.subject ?? raw.title ?? 'Chưa có tiêu đề').replace('Khách hàng', '').trim(),
     customerName: String(
       raw.customerName

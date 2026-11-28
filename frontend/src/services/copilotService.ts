@@ -43,16 +43,28 @@ export async function getCopilot(ticket: Ticket, token: string | null): Promise<
     })
     return structuredClone(fixtures.get(ticket.id)!)
   }
-  return parseDraft(await (await request(`/api/tickets/${encodeURIComponent(ticket.id)}/copilot`, token)).json())
+  return parseDraft(await (await request(`/api/v1/copilot/${encodeURIComponent(ticket.backendId ?? ticket.id)}/approval`, token)).json())
 }
-export async function reviewCopilot(id: string, token: string | null, current: CopilotDraft, action: 'approve' | 'reject', draft: string, reason: string): Promise<CopilotDraft> {
+export async function reviewCopilot(ticket: Ticket, token: string | null, current: CopilotDraft, action: 'approve' | 'reject', draft: string, reason: string): Promise<CopilotDraft> {
   if (isCopilotDemo(token)) {
     const updated: CopilotDraft = { ...current, draft, approval_status: action === 'approve' ? 'APPROVED' : 'REJECTED', rejection_reason: action === 'reject' ? reason : null }
-    fixtures.set(id, updated)
+    fixtures.set(ticket.id, updated)
     return structuredClone(updated)
   }
-  return parseDraft(await (await request(`/api/v1/copilot/${encodeURIComponent(id)}/${action}`, token,
-    { method: 'PATCH', body: JSON.stringify({ draft, ...(action === 'reject' ? { reason } : {}) }) })).json())
+  const id = ticket.backendId ?? ticket.id
+  const result = await (await request(`/api/v1/copilot/${encodeURIComponent(id)}/${action}`, token,
+    { method: 'PATCH', body: JSON.stringify({ draft, ...(action === 'reject' ? { rejection_reason: reason } : {}) }) })).json()
+  const expected = action === 'approve' ? 'APPROVED' : 'REJECTED'
+  if (result.approval_status !== expected || result.persisted !== true) {
+    throw new Error('Máy chủ chưa xác nhận lưu quyết định. Hãy tải lại bản nháp trước khi thử lại.')
+  }
+  try {
+    const updated = await getCopilot(ticket, token)
+    if (updated.approval_status !== expected) throw new Error('Trạng thái chưa đồng bộ')
+    return updated
+  } catch {
+    throw new Error('Quyết định đã được lưu nhưng chưa tải lại được bản nháp. Hãy tải lại trang, không gửi duyệt lần nữa.')
+  }
 }
 export async function exportCopilotPdf(id: string, token: string | null) {
   const response = await request(`/api/v1/copilot/${encodeURIComponent(id)}/export`, token)

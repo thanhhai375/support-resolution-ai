@@ -6,16 +6,20 @@ import { useAuth } from '../auth/AuthProvider'
 import { exportCopilotPdf, getCopilot, isCopilotDemo, reviewCopilot, type CopilotDraft } from '../services/copilotService'
 import SourceViewer from './SourceViewer'
 import type { KnowledgeExcerpt } from '../data/knowledge'
+import { useTickets } from '../context/TicketsProvider'
+import { getTickets } from '../services/ticketService'
 import './ReviewApprovalPanel.css'
 
 export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
   const { role, token, signIn } = useAuth()
+  const { updateTicket } = useTickets()
   const canReview = role === 'ENGINEER' || role === 'MANAGER'
   const [data, setData] = useState<CopilotDraft | null>(null)
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [retry, setRetry] = useState(0)
   const [reason, setReason] = useState('')
   const [selected, setSelected] = useState<KnowledgeExcerpt | null>(null)
@@ -24,7 +28,7 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
   const version = useRef(0)
   useEffect(() => {
     const request = ++version.current
-    setLoading(true); setBusy(false); setData(null); setError(''); setSelected(null); setReason('')
+    setLoading(true); setBusy(false); setData(null); setError(''); setSuccess(''); setSelected(null); setReason('')
     dialog.current?.close()
     getCopilot(ticket, token).then(value => {
       if (request === version.current) { setData(value); setDraft(value.draft) }
@@ -32,19 +36,27 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
       if (request === version.current) setError('Không thể tải bản nháp. API có thể chưa sẵn sàng. Vui lòng thử lại.')
     }).finally(() => { if (request === version.current) setLoading(false) })
     return () => { version.current++ }
-  }, [ticket.id, token, retry]) // Reload only when the ticket/session changes.
+  }, [ticket.id, ticket.backendId, token, retry]) // Reload only when the ticket/session changes.
 
   async function review(action: 'approve' | 'reject') {
-    if (!data || busy || !canReview || !draft.trim() || (action === 'reject' && !reason.trim())) return
+    if (!data || data.approval_status === 'APPROVED' || busy || !canReview || !draft.trim() || (action === 'reject' && !reason.trim())) return
     const request = version.current
-    setBusy(true); setError('')
+    setBusy(true); setError(''); setSuccess('')
     try {
-      const updated = await reviewCopilot(ticket.id, token, data, action, draft.trim(), reason.trim())
+      const updated = await reviewCopilot(ticket, token, data, action, draft.trim(), reason.trim())
       if (request !== version.current) return
       setData(updated); setDraft(updated.draft)
       dialog.current?.close(); rejectButton.current?.focus()
+      setSuccess(action === 'approve' ? 'Phê duyệt thành công!' : 'Từ chối thành công!')
+      if (!isCopilotDemo(token)) {
+        const result = await getTickets()
+        if (request !== version.current) return
+        const fresh = result.source === 'api' ? result.tickets.find(item => item.id === ticket.id) : undefined
+        if (fresh) updateTicket(fresh)
+        else setError('Đã lưu quyết định nhưng chưa đồng bộ được ticket. Vui lòng tải lại trang.')
+      }
     } catch (cause) {
-      if (request === version.current) setError(cause instanceof Error ? cause.message : 'Không thể cập nhật phê duyệt.')
+      if (request === version.current) { setError(cause instanceof Error ? cause.message : 'Không thể cập nhật phê duyệt.'); dialog.current?.close() }
     } finally { if (request === version.current) setBusy(false) }
   }
   async function exportPdf() {
@@ -62,7 +74,7 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
         content.textContent = data.draft
         preview.document.body.append(content)
         preview.focus(); preview.print()
-      } else await exportCopilotPdf(ticket.id, token)
+      } else await exportCopilotPdf(ticket.backendId ?? ticket.id, token)
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Không thể xuất PDF.') }
     finally { setBusy(false) }
   }
@@ -83,6 +95,7 @@ export default function ReviewApprovalPanel({ ticket }: { ticket: Ticket }) {
       </select>
     </label>}
     {loading && <p role="status">Đang tải bản nháp…</p>}
+    {success && <p role="status" className="crm30-message">{success}</p>}
     {error && <p role="alert" className="crm30-reason">{error}</p>}
     {!loading && !data && <button className="secondary-button" onClick={() => setRetry(value => value + 1)}>Thử lại</button>}
     {data && <>
