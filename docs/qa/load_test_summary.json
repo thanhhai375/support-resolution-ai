@@ -1,0 +1,70 @@
+{
+  "users": 5,
+  "requests": 100,
+  "wall_seconds": 0.64,
+  "throughput_rps": 156.27,
+  "errors": 0,
+  "holds": 10,
+  "analyze_total": {
+    "n": 50,
+    "mean_ms": 34.96,
+    "p50_ms": 35.46,
+    "p95_ms": 50.53,
+    "p99_ms": 70.68,
+    "max_ms": 77.4
+  },
+  "search_total": {
+    "n": 50,
+    "mean_ms": 27.59,
+    "p50_ms": 25.1,
+    "p95_ms": 41.23,
+    "p99_ms": 64.14,
+    "max_ms": 66.06
+  },
+  "all_total": {
+    "n": 100,
+    "mean_ms": 31.28,
+    "p50_ms": 28.57,
+    "p95_ms": 47.18,
+    "p99_ms": 66.17,
+    "max_ms": 77.4
+  },
+  "server_retrieval": {
+    "n": 40,
+    "mean_ms": 19.1,
+    "p50_ms": 18.28,
+    "p95_ms": 32.77,
+    "p99_ms": 34.5,
+    "max_ms": 34.77
+  },
+  "server_generation": {
+    "n": 40,
+    "mean_ms": 0.12,
+    "p50_ms": 0.13,
+    "p95_ms": 0.16,
+    "p99_ms": 0.16,
+    "max_ms": 0.16
+  },
+  "server_save_db": {
+    "n": 50,
+    "mean_ms": 0.0,
+    "p50_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.0,
+    "max_ms": 0.0
+  },
+  "server_pipeline": {
+    "n": 50,
+    "mean_ms": 15.5,
+    "p50_ms": 17.61,
+    "p95_ms": 29.5,
+    "p99_ms": 34.5,
+    "max_ms": 34.83
+  },
+  "limit_p95_ms": 30000,
+  "pass_p95_all": true,
+  "pass_p95_analyze": true,
+  "knowledge_passages": 300,
+  "synthetic_passages_added": 291,
+  "ai_provider_called": false
+}
